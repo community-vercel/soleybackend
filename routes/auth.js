@@ -385,6 +385,8 @@ router.post('/reset-password/:resetToken', [
     });
   }
 
+  
+
   // Get hashed token
   const hashedToken = require('crypto')
     .createHash('sha256')
@@ -395,6 +397,7 @@ router.post('/reset-password/:resetToken', [
     resetPasswordToken: hashedToken,
     resetPasswordExpire: { $gt: Date.now() }
   });
+
 
   if (!user) {
     return res.status(400).json({

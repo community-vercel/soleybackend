@@ -16,6 +16,7 @@ const categoryRoutes = require('./routes/categoryRoutes');
 const foodItemRoutes = require('./routes/fooditems');
 const orderRoutes = require('./routes/orderRoutes');
 // const branchRoutes = require('./routes/branches');
+const setting = require('./routes/settings');
 
 // Import middleware
 const errorHandler = require('./middleware/errorHandler');
@@ -56,7 +57,7 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Data sanitization against NoSQL query injection
-app.use(mongoSanitize());
+// app.use(mongoSanitize());
 
 // Data sanitization against XSS
 app.use((req, res, next) => {
@@ -97,7 +98,7 @@ app.use('/api/v1/categories', categoryRoutes);
 app.use('/api/v1/food-items', foodItemRoutes);
 app.use('/api/v1/orders', orderRoutes);
 // app.use('/api/v1/branches', branchRoutes);
-
+app.use('/api/v1/settings', setting);
 // 404 handler
 app.use(notFound);
 
@@ -107,11 +108,7 @@ app.use(errorHandler);
 // MongoDB connection
 const connectDB = async () => {
   try {
-    const conn = await mongoose.connect(process.env.MONGODB_URI, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    });
-
+    const conn = await mongoose.connect(process.env.MONGODB_URI, {});
     console.log(`MongoDB Connected: ${conn.connection.host}`);
     
     // Set up indexes for better performance
@@ -122,7 +119,6 @@ const connectDB = async () => {
     process.exit(1);
   }
 };
-
 // Setup database indexes
 const setupIndexes = async () => {
   try {
@@ -155,9 +151,7 @@ const setupIndexes = async () => {
   }
 };
 
-// Graceful shutdown
-process.on('SIGTERM', gracefulShutdown);
-process.on('SIGINT', gracefulShutdown);
+
 
 function gracefulShutdown(signal) {
   console.log(`Received ${signal}. Shutting down gracefully...`);

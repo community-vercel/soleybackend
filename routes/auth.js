@@ -121,7 +121,7 @@ router.post('/login', [
   if (!user) {
     return res.status(401).json({
       success: false,
-      message: 'Invalid credentials'
+      message: 'Invalid credential'
     });
   }
 
@@ -139,7 +139,7 @@ router.post('/login', [
   if (!isPasswordCorrect) {
     return res.status(401).json({
       success: false,
-      message: 'Invalid credentials'
+      message: 'Invalid credentialsss'
     });
   }
 

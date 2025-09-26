@@ -115,11 +115,19 @@ userSchema.virtual('initials').get(function() {
 // Encrypt password before saving
 userSchema.pre('save', async function(next) {
   if (!this.isModified('password')) {
-    next();
+    console.log('Password not modified, skipping hash for:', this.email);
+    return next();
   }
-  
+  // Skip if password is already hashed
+  if (this.password && (this.password.startsWith('$2a$') || this.password.startsWith('$2b$'))) {
+    console.log('Password already hashed, skipping for:', this.email);
+    return next();
+  }
+  console.log('Hashing password for:', this.email);
   const salt = await bcrypt.genSalt(10);
   this.password = await bcrypt.hash(this.password, salt);
+  console.log('Hashed password:', this.password);
+  next();
 });
 
 // Match password

@@ -93,7 +93,8 @@ app.get('/health', (req, res) => {
   });
 });
 
-// API routes
+
+
 app.use('/api/v1/auth', authRoutes);
 // app.use('/api/v1/user', userRoutes);
 app.use('/api/v1/categories', categoryRoutes);

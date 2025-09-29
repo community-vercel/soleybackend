@@ -26,9 +26,6 @@ const app = express();
 const fetch = require('node-fetch');
 
 
-
-
-// Trust proxy for accurate IP addresses
 app.set('trust proxy', 1);
 
 // Security middleware

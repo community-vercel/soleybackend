@@ -118,7 +118,6 @@ app.use('/api/v1/orders', orderRoutes);
 app.use('/api/v1/settings', setting);
 app.use('/api/v1/offer', offers);
 // 404 handler
-const fetch = require('node-fetch');
 
 app.get('/proxy-image', async (req, res) => {
   const { url } = req.query;

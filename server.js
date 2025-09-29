@@ -19,26 +19,14 @@ const orderRoutes = require('./routes/orderRoutes');
 const setting = require('./routes/settings');
 const offers = require('./routes/offer');
 
-
 // Import middleware
 const errorHandler = require('./middleware/errorHandler');
 const notFound = require('./middleware/not-found');
 const app = express();
 const fetch = require('node-fetch');
 
-app.get('/proxy-image', async (req, res) => {
-  const { url } = req.query;
-  try {
-    const response = await fetch(url);
-    const buffer = await response.arrayBuffer();
 
-    res.set('Content-Type', response.headers.get('content-type') || 'image/jpeg');
-    res.set('Access-Control-Allow-Origin', '*'); // 👈 this fixes WebGL
-    res.send(Buffer.from(buffer));
-  } catch (error) {
-    res.status(500).json({ error: 'Image fetch failed' });
-  }
-});
+
 
 // Trust proxy for accurate IP addresses
 app.set('trust proxy', 1);
@@ -125,12 +113,13 @@ app.get('/proxy-image', async (req, res) => {
     const buffer = await response.arrayBuffer();
 
     res.set('Content-Type', response.headers.get('content-type') || 'image/jpeg');
-    res.set('Access-Control-Allow-Origin', '*'); // 👈 this fixes WebGL
+    res.set('Access-Control-Allow-Origin', '*'); // 👈 fixes WebGL / CORS
     res.send(Buffer.from(buffer));
   } catch (error) {
     res.status(500).json({ error: 'Image fetch failed' });
   }
 });
+
 
 app.use(notFound);
 

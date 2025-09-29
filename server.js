@@ -23,7 +23,6 @@ const offers = require('./routes/offer');
 // Import middleware
 const errorHandler = require('./middleware/errorHandler');
 const notFound = require('./middleware/not-found');
-
 const app = express();
 const fetch = require('node-fetch');
 

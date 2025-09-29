@@ -3,6 +3,7 @@ const { body, param, validationResult } = require('express-validator');
 const { Category } = require('../models/Category');
 const { auth, authorize } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
+  const { FoodItem } = require('../models/Category');
 
 const router = express.Router();
 
@@ -157,7 +158,6 @@ router.delete('/:id', [
   }
 
   // Check if category has items
-  const { FoodItem } = require('../models/FoodItem');
   const itemCount = await FoodItem.countDocuments({ category: req.params.id });
 
   if (itemCount > 0) {

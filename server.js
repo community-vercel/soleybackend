@@ -17,6 +17,8 @@ const foodItemRoutes = require('./routes/fooditems');
 const orderRoutes = require('./routes/orderRoutes');
 // const branchRoutes = require('./routes/branches');
 const setting = require('./routes/settings');
+const offers = require('./routes/offer');
+
 
 // Import middleware
 const errorHandler = require('./middleware/errorHandler');
@@ -99,6 +101,7 @@ app.use('/api/v1/food-items', foodItemRoutes);
 app.use('/api/v1/orders', orderRoutes);
 // app.use('/api/v1/branches', branchRoutes);
 app.use('/api/v1/settings', setting);
+app.use('/api/v1/offer', offers);
 // 404 handler
 app.use(notFound);
 

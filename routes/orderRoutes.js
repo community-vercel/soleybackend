@@ -225,6 +225,8 @@ router.get('/:id', [
 
   const orderUserId = order.userId._id ? order.userId._id.toString() : order.userId.toString();
 
+
+  
 if (
   orderUserId !== req.user.id &&
   !['admin', 'manager'].includes(req.user.role)

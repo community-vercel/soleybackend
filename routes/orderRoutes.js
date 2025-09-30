@@ -12,11 +12,12 @@ const router = express.Router();
 // @access  Private
 router.post('/', [
   auth,
-  body('items').isArray({ min: 1 }).withMessage('Order must contain at least one item'),
+   body('items').isArray({ min: 1 }).withMessage('Order must contain at least one item'),
 body('items.*.foodItem.id').isMongoId().withMessage('Invalid food item ID'),
   body('items.*.quantity').isInt({ min: 1 }).withMessage('Quantity must be at least 1'),
   body('deliveryType').isIn(['delivery', 'pickup']).withMessage('Invalid delivery type'),
   body('paymentMethod').isIn(['cash-on-delivery','cashOnDelivery', 'card', 'paypal', 'stripe']).withMessage('Invalid payment method'),
+body('branchId').isMongoId().withMessage('Invalid branch ID')
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -127,7 +128,7 @@ body('items.*.foodItem.id').isMongoId().withMessage('Invalid food item ID'),
     paymentMethod,
     deliveryType,
     deliveryAddress,
-    // branchId,
+    branchId,
     specialInstructions
   });
 

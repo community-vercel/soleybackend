@@ -13,6 +13,7 @@ const cartItemSchema = new mongoose.Schema({
   },
   selectedMealSize: {
     name: String,
+    
     additionalPrice: {
       type: Number,
       default: 0

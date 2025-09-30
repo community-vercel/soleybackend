@@ -102,8 +102,8 @@ router.post('/', [
   }
 
   // Calculate delivery fee and tax
-  const deliveryFee = deliveryType === 'delivery' ? 2.99 : 0;
-  const taxRate = 0.08; // 8% tax
+  const deliveryFee = deliveryType === 'delivery' ? 0.0 : 0;
+  const taxRate = 0.00; // 8% tax
   const tax = subtotal * taxRate;
   
   // Apply discount/coupon (simplified)
@@ -225,15 +225,15 @@ router.get('/:id', [
 
   const orderUserId = order.userId._id ? order.userId._id.toString() : order.userId.toString();
 
-if (
-  orderUserId !== req.user.id &&
-  !['admin', 'manager'].includes(req.user.role)
-) {
-  return res.status(403).json({
-    success: false,
-    message: 'Not authorized to access this order'
-  });
-}
+// if (
+//   orderUserId !== req.user.id &&
+//   !['admin', 'manager'].includes(req.user.role)
+// ) {
+//   return res.status(403).json({
+//     success: false,
+//     message: 'Not authorized to access this order'
+//   });
+// }
 
 
   res.json({

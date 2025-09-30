@@ -99,6 +99,7 @@ const orderSchema = new mongoose.Schema({
       'confirmed',
       'preparing',
       'ready',
+      'pickup',
       'out-for-delivery',
       'delivered',
       'cancelled',

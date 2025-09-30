@@ -125,21 +125,21 @@ const offerSchema = new mongoose.Schema({
     type: String,
     trim: true
   }],
-  usageHistory: [{
-    user: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User'
-    },
-    order: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Order'
-    },
-    discountAmount: Number,
-    usedAt: {
-      type: Date,
-      default: Date.now
-    }
-  }]
+usageHistory: [{
+  user: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
+  order: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Order'
+  },
+  discountAmount: Number,
+  usedAt: {
+    type: Date,
+    default: Date.now
+  }
+}, { default: [] }]
 }, {
   timestamps: true,
   toJSON: { virtuals: true },
@@ -190,7 +190,10 @@ offerSchema.index({ type: 1 });
 offerSchema.methods.canUserUse = function(userId) {
   if (!this.isValid) return false;
   
-  const userUsage = this.usageHistory.filter(usage => 
+  // Ensure usageHistory is an array; default to empty array if undefined or null
+  const usageHistory = Array.isArray(this.usageHistory) ? this.usageHistory : [];
+  
+  const userUsage = usageHistory.filter(usage => 
     usage.user.toString() === userId.toString()
   ).length;
   

@@ -3,6 +3,7 @@ const { body, param, query, validationResult } = require('express-validator');
 const Offer = require('../models/offer');
 const { auth, authorize, optionalAuth } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
+const mongoose = require('mongoose');
 
 const router = express.Router();
 
@@ -40,7 +41,6 @@ router.get('/', [
     endDate: { $gte: now }
   };
 
-  // Apply filters
   if (featured !== undefined) query.isFeatured = featured === 'true';
   if (type) query.type = type;
 
@@ -50,12 +50,26 @@ router.get('/', [
     .sort({ priority: -1, isFeatured: -1, createdAt: -1 })
     .limit(parseInt(limit))
     .skip(skip)
-    .select('-usageHistory'); // Don't expose usage history to public
+    .select('-usageHistory');
 
-  // Filter offers that user can still use (if authenticated)
+  console.log('Offers before filtering:', offers.map(o => ({
+    id: o._id,
+    title: o.title,
+    isValid: o.isValid,
+    startDate: o.startDate,
+    endDate: o.endDate
+  })));
+
   let filteredOffers = offers;
   if (req.user) {
-    filteredOffers = offers.filter(offer => offer.canUserUse(req.user.id));
+    if (!mongoose.Types.ObjectId.isValid(req.user.id)) {
+      return res.status(400).json({ success: false, message: 'Invalid user ID' });
+    }
+    filteredOffers = offers.filter(offer => {
+      const canUse = offer.canUserUse(req.user.id);
+      console.log(`Offer ${offer._id} canUserUse for user ${req.user.id}: ${canUse}`);
+      return canUse;
+    });
   }
 
   const totalOffers = await Offer.countDocuments(query);

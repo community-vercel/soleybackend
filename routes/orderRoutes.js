@@ -223,13 +223,18 @@ router.get('/:id', [
     });
   }
 
-  // Check if user owns this order or is admin/manager
-  if (order.userId._id.toString() !== req.user.id && !['admin', 'manager'].includes(req.user.role)) {
-    return res.status(403).json({
-      success: false,
-      message: 'Not authorized to access this order'
-    });
-  }
+  const orderUserId = order.userId._id ? order.userId._id.toString() : order.userId.toString();
+
+if (
+  orderUserId !== req.user.id &&
+  !['admin', 'manager'].includes(req.user.role)
+) {
+  return res.status(403).json({
+    success: false,
+    message: 'Not authorized to access this order'
+  });
+}
+
 
   res.json({
     success: true,

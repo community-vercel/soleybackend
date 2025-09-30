@@ -13,11 +13,10 @@ const router = express.Router();
 router.post('/', [
   auth,
   body('items').isArray({ min: 1 }).withMessage('Order must contain at least one item'),
-  body('items.*.foodItem').isMongoId().withMessage('Invalid food item ID'),
+body('items.*.foodItem.id').isMongoId().withMessage('Invalid food item ID'),
   body('items.*.quantity').isInt({ min: 1 }).withMessage('Quantity must be at least 1'),
   body('deliveryType').isIn(['delivery', 'pickup']).withMessage('Invalid delivery type'),
-  body('paymentMethod').isIn(['cash-on-delivery', 'card', 'paypal', 'stripe']).withMessage('Invalid payment method'),
-  body('branchId').isMongoId().withMessage('Invalid branch ID')
+  body('paymentMethod').isIn(['cash-on-delivery','cashOnDelivery', 'card', 'paypal', 'stripe']).withMessage('Invalid payment method'),
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -128,7 +127,7 @@ router.post('/', [
     paymentMethod,
     deliveryType,
     deliveryAddress,
-    branchId,
+    // branchId,
     specialInstructions
   });
 

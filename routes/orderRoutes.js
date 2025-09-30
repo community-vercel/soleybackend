@@ -38,6 +38,7 @@ body('branchId').isMongoId().withMessage('Invalid branch ID')
     couponCode
   } = req.body;
 
+  
   // Validate delivery address for delivery orders
   if (deliveryType === 'delivery' && !deliveryAddress) {
     return res.status(400).json({

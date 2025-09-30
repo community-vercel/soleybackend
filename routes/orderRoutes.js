@@ -225,15 +225,15 @@ router.get('/:id', [
 
   const orderUserId = order.userId._id ? order.userId._id.toString() : order.userId.toString();
 
-// if (
-//   orderUserId !== req.user.id &&
-//   !['admin', 'manager'].includes(req.user.role)
-// ) {
-//   return res.status(403).json({
-//     success: false,
-//     message: 'Not authorized to access this order'
-//   });
-// }
+if (
+  orderUserId !== req.user.id &&
+  !['admin', 'manager'].includes(req.user.role)
+) {
+  return res.status(403).json({
+    success: false,
+    message: 'Not authorized to access this order'
+  });
+}
 
 
   res.json({

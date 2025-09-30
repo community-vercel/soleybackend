@@ -85,6 +85,8 @@ router.post('/register', [
       lastName: user.lastName,
       email: user.email,
       phone: user.phone,
+            toke:token,
+
       role: user.role,
       emailVerified: user.emailVerified,
       phoneVerified: user.phoneVerified
@@ -158,6 +160,7 @@ router.post('/login', [
       firstName: user.firstName,
       lastName: user.lastName,
       email: user.email,
+      toke:token,
       phone: user.phone,
       role: user.role,
       emailVerified: user.emailVerified,

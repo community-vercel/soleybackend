@@ -144,6 +144,52 @@ orderNumber,
   });
 }));
 
+
+router.get('/getall', [
+  auth,
+  query('page').optional().isInt({ min: 1 }).withMessage('Page must be positive integer'),
+  query('limit').optional().isInt({ min: 1, max: 50 }).withMessage('Limit must be between 1 and 50'),
+  query('status').optional().isIn(['pending', 'confirmed', 'preparing', 'ready', 'out-for-delivery', 'delivered', 'cancelled']).withMessage('Invalid status')
+], asyncHandler(async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      success: false,
+      message: 'Validation failed',
+      errors: errors.array()
+    });
+  }
+
+  const { page = 1, limit = 10, status } = req.query;
+  const skip = (page - 1) * limit;
+
+  let query = { userId: req.user.id || req.user._id || req.user.userId };
+  if (status) query.status = status;
+
+
+
+  const orders = await Order.find()
+    .populate([
+      { path: 'items.foodItem', select: 'name imageUrl price' },
+      { path: 'branchId', select: 'name address phone' }
+    ])
+    .sort({ createdAt: -1 })
+    .limit(parseInt(limit))
+    .skip(skip);
+  
+
+  const totalOrders = await Order.countDocuments(query);
+  const totalPages = Math.ceil(totalOrders / limit);
+
+  res.json({
+    success: true,
+    count: orders.length,
+    totalOrders,
+    totalPages,
+    currentPage: parseInt(page),
+    orders
+  });
+}));
 // @desc    Get user orders
 // @route   GET /api/v1/orders
 // @access  Private
@@ -165,8 +211,10 @@ router.get('/', [
   const { page = 1, limit = 10, status } = req.query;
   const skip = (page - 1) * limit;
 
-  let query = { userId: req.user.id };
+  let query = { userId: req.user.id || req.user._id || req.user.userId };
   if (status) query.status = status;
+
+
 
   const orders = await Order.find(query)
     .populate([
@@ -176,6 +224,7 @@ router.get('/', [
     .sort({ createdAt: -1 })
     .limit(parseInt(limit))
     .skip(skip);
+  
 
   const totalOrders = await Order.countDocuments(query);
   const totalPages = Math.ceil(totalOrders / limit);

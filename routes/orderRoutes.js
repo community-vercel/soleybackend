@@ -52,8 +52,8 @@ body('branchId').isMongoId().withMessage('Invalid branch ID')
   let subtotal = 0;
 
   for (const item of items) {
-    const foodItem = await FoodItem.findById(item.foodItem);
-    
+const foodItemId = item.foodItem?.id || item.foodItem;
+const foodItem = await FoodItem.findById(foodItemId);    
     if (!foodItem || !foodItem.isActive) {
       return res.status(400).json({
         success: false,

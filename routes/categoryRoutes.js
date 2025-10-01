@@ -21,7 +21,17 @@ router.get('/', asyncHandler(async (req, res) => {
     categories
   });
 }));
+router.get('/all', asyncHandler(async (req, res) => {
+  const categories = await Category.find()
+    .populate('itemsCount')
+    .sort({ sortOrder: 1, name: 1 });
 
+  res.json({
+    success: true,
+    count: categories.length,
+    categories
+  });
+}));
 // @desc    Get single category
 // @route   GET /api/v1/categories/:id
 // @access  Public

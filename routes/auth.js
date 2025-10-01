@@ -480,13 +480,21 @@ router.post('/forgot-password', [
   // Create reset URL
   const resetUrl = `${req.protocol}://${req.get('host')}/api/v1/auth/reset-password/${resetToken}`;
 
-  console.log('Password Reset URL:', resetUrl);
-
-  res.json({
-    success: true,
-    message: 'Password reset email sent',
-    resetToken: process.env.NODE_ENV === 'development' ? resetToken : undefined
-  });
+  // Send password reset email
+  try {
+    await sendPasswordResetEmail(user.email, user.firstName, resetUrl);
+    res.json({
+      success: true,
+      message: 'Password reset email sent',
+      resetToken: process.env.NODE_ENV === 'development' ? resetToken : undefined
+    });
+  } catch (error) {
+    console.error('Error sending password reset email:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to send password reset email'
+    });
+  }
 }));
 
 // @desc    Reset password

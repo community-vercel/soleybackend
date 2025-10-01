@@ -12,13 +12,13 @@ const createTransporter = () => {
     console.log('SMTP Configuration:', {
       host: process.env.SMTP_HOST,
       port: process.env.SMTP_PORT,
-      user: process.env.SMTP_USER ? '***' : 'NOT SET',
+      user: process.env.SMTP_EMAIL ? '***' : 'NOT SET',
       pass: process.env.SMTP_PASSWORD ? '***' : 'NOT SET'
     });
 
     // Check if credentials are available
-    if (!process.env.SMTP_USER || !process.env.SMTP_PASSWORD) {
-      throw new Error('SMTP credentials not configured. Please set SMTP_USER and SMTP_PASSWORD environment variables.');
+    if (!process.env.SMTP_EMAIL || !process.env.SMTP_PASSWORD) {
+      throw new Error('SMTP credentials not configured. Please set SMTP_EMAIL and SMTP_PASSWORD environment variables.');
     }
 
     // Note: It's createTransport (not createTransporter)
@@ -27,7 +27,7 @@ const createTransporter = () => {
       port: parseInt(process.env.SMTP_PORT || '587'),
       secure: process.env.SMTP_PORT === '465', // true for 465, false for other ports
       auth: {
-        user: process.env.SMTP_USER,
+        user: process.env.SMTP_EMAIL,
         pass: process.env.SMTP_PASSWORD
       },
       // Add these for better reliability
@@ -56,7 +56,7 @@ const sendVerificationEmail = async (email, firstName, verificationUrl) => {
     const transporter = createTransporter();
 
     const mailOptions = {
-      from: `"${process.env.APP_NAME || 'Soely'}" <${process.env.EMAIL_FROM || process.env.SMTP_USER}>`,
+      from: `"${process.env.APP_NAME || 'Soely'}" <${process.env.FROM_EMAIL || process.env.SMTP_EMAIL}>`,
       to: email,
       subject: 'Verify Your Email Address',
       html: `
@@ -216,7 +216,7 @@ const sendPasswordResetEmail = async (email, firstName, resetUrl) => {
     const transporter = createTransporter();
 
     const mailOptions = {
-      from: `"${process.env.APP_NAME || 'Soely'}" <${process.env.EMAIL_FROM || process.env.SMTP_USER}>`,
+      from: `"${process.env.APP_NAME || 'Soely'}" <${process.env.FROM_EMAIL || process.env.SMTP_EMAIL}>`,
       to: email,
       subject: 'Password Reset Request',
       html: `

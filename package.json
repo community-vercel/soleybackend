@@ -27,6 +27,7 @@
     "multer": "^2.0.2",
     "node-cron": "^4.2.1",
     "node-fetch": "^2.7.0",
+    "nodemailer": "^7.0.6",
     "xss": "^1.0.15"
   },
   "devDependencies": {

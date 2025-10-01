@@ -5,6 +5,7 @@ const { body, validationResult } = require('express-validator');
 const User = require('../models/User');
 const { auth } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
+const { sendVerificationEmail } = require('../utils/emailService');
 
 const router = express.Router();
 
@@ -69,15 +70,73 @@ router.post('/register', [
     password
   });
 
-  // Generate token
+  // Generate email verification token
+  const verificationToken = user.generateEmailVerificationToken();
+  await user.save({ validateBeforeSave: false });
+
+  // Create verification URL
+  const verificationUrl = `${req.protocol}://${req.get('host')}/api/v1/auth/verify-email/${verificationToken}`;
+
+  // Send verification email
+  try {
+    await sendVerificationEmail(user.email, user.firstName, verificationUrl);
+  } catch (error) {
+    console.error('Error sending verification email:', error);
+    // Continue registration even if email fails
+  }
+
+  res.status(201).json({
+    success: true,
+    message: 'Registration successful. Please check your email to verify your account.',
+    requiresVerification: true,
+    user: {
+      id: user._id,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      email: user.email,
+      phone: user.phone,
+      emailVerified: user.emailVerified
+    }
+  });
+}));
+
+// @desc    Verify email
+// @route   GET /api/v1/auth/verify-email/:token
+// @access  Public
+router.get('/verify-email/:token', asyncHandler(async (req, res) => {
+  // Get hashed token
+  const hashedToken = require('crypto')
+    .createHash('sha256')
+    .update(req.params.token)
+    .digest('hex');
+
+  const user = await User.findOne({
+    emailVerificationToken: hashedToken,
+    emailVerificationExpire: { $gt: Date.now() }
+  });
+
+  if (!user) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid or expired verification token'
+    });
+  }
+
+  // Mark email as verified
+  user.emailVerified = true;
+  user.emailVerificationToken = undefined;
+  user.emailVerificationExpire = undefined;
+  await user.save({ validateBeforeSave: false });
+
+  // Generate auth token
   const token = user.generateAuthToken();
 
   // Update last login
   await user.updateLastLogin();
 
-  res.status(201).json({
+  res.json({
     success: true,
-    message: 'User registered successfully',
+    message: 'Email verified successfully',
     token,
     user: {
       id: user._id,
@@ -85,13 +144,72 @@ router.post('/register', [
       lastName: user.lastName,
       email: user.email,
       phone: user.phone,
-            toke:token,
-
+      token: token,
       role: user.role,
       emailVerified: user.emailVerified,
       phoneVerified: user.phoneVerified
     }
   });
+}));
+
+// @desc    Resend verification email
+// @route   POST /api/v1/auth/resend-verification
+// @access  Public
+router.post('/resend-verification', [
+  body('email')
+    .isEmail()
+    .normalizeEmail()
+    .withMessage('Please provide a valid email')
+], asyncHandler(async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      success: false,
+      message: 'Validation failed',
+      errors: errors.array()
+    });
+  }
+
+  const { email } = req.body;
+
+  const user = await User.findOne({ email });
+
+  if (!user) {
+    return res.status(404).json({
+      success: false,
+      message: 'User not found with that email'
+    });
+  }
+
+  if (user.emailVerified) {
+    return res.status(400).json({
+      success: false,
+      message: 'Email is already verified'
+    });
+  }
+
+  // Generate new verification token
+  const verificationToken = user.generateEmailVerificationToken();
+  await user.save({ validateBeforeSave: false });
+
+  // Create verification URL
+  const verificationUrl = `${req.protocol}://${req.get('host')}/api/v1/auth/verify-email/${verificationToken}`;
+
+  // Send verification email
+  try {
+    await sendVerificationEmail(user.email, user.firstName, verificationUrl);
+    
+    res.json({
+      success: true,
+      message: 'Verification email sent successfully'
+    });
+  } catch (error) {
+    console.error('Error sending verification email:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to send verification email'
+    });
+  }
 }));
 
 // @desc    Login user
@@ -141,7 +259,17 @@ router.post('/login', [
   if (!isPasswordCorrect) {
     return res.status(401).json({
       success: false,
-      message: 'Invalid credentialsss'
+      message: 'Invalid credentials'
+    });
+  }
+
+  // Check if email is verified
+  if (!user.emailVerified) {
+    return res.status(403).json({
+      success: false,
+      message: 'Please verify your email before logging in',
+      requiresVerification: true,
+      email: user.email
     });
   }
 
@@ -160,7 +288,7 @@ router.post('/login', [
       firstName: user.firstName,
       lastName: user.lastName,
       email: user.email,
-      toke:token,
+      token: token,
       phone: user.phone,
       role: user.role,
       emailVerified: user.emailVerified,
@@ -310,8 +438,6 @@ router.patch('/change-password', [
 // @route   POST /api/v1/auth/logout
 // @access  Private
 router.post('/logout', auth, asyncHandler(async (req, res) => {
-  // In a more sophisticated implementation, you might want to blacklist the token
-  // For now, we'll just send a success response
   res.json({
     success: true,
     message: 'Logout successful'
@@ -354,7 +480,6 @@ router.post('/forgot-password', [
   // Create reset URL
   const resetUrl = `${req.protocol}://${req.get('host')}/api/v1/auth/reset-password/${resetToken}`;
 
-  // In a real application, you would send this URL via email
   console.log('Password Reset URL:', resetUrl);
 
   res.json({
@@ -388,8 +513,6 @@ router.post('/reset-password/:resetToken', [
     });
   }
 
-  
-
   // Get hashed token
   const hashedToken = require('crypto')
     .createHash('sha256')
@@ -400,7 +523,6 @@ router.post('/reset-password/:resetToken', [
     resetPasswordToken: hashedToken,
     resetPasswordExpire: { $gt: Date.now() }
   });
-
 
   if (!user) {
     return res.status(400).json({

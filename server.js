@@ -18,6 +18,7 @@ const orderRoutes = require('./routes/orderRoutes');
 // const branchRoutes = require('./routes/branches');
 const setting = require('./routes/settings');
 const offers = require('./routes/offer');
+const bannerRoutes = require('./routes/bannerRoutes');
 
 // Import middleware
 const errorHandler = require('./middleware/errorHandler');
@@ -101,11 +102,14 @@ app.get('/health', (req, res) => {
 
 
 app.use('/api/v1/auth', authRoutes);
+
 // app.use('/api/v1/user', userRoutes);
 app.use('/api/v1/categories', categoryRoutes);
 app.use('/api/v1/food-items', foodItemRoutes);
 app.use('/api/v1/orders', orderRoutes);
 // app.use('/api/v1/branches', branchRoutes);
+app.use('/api/v1/banners', bannerRoutes);
+
 app.use('/api/v1/settings', setting);
 app.use('/api/v1/offer', offers);
 // 404 handler

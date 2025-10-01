@@ -5,7 +5,7 @@ const { body, validationResult } = require('express-validator');
 const User = require('../models/User');
 const { auth } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
-const { sendVerificationEmail } = require('../utils/emailService');
+const { sendVerificationEmail,sendPasswordResetEmail } = require('../utils/emailService');
 
 const router = express.Router();
 

@@ -8,11 +8,24 @@ const createTransporter = () => {
       throw new Error('Nodemailer not properly loaded');
     }
 
+    // Debug: Log environment variables (remove in production)
+    console.log('SMTP Configuration:', {
+      host: process.env.SMTP_HOST,
+      port: process.env.SMTP_PORT,
+      user: process.env.SMTP_USER ? '***' : 'NOT SET',
+      pass: process.env.SMTP_PASSWORD ? '***' : 'NOT SET'
+    });
+
+    // Check if credentials are available
+    if (!process.env.SMTP_USER || !process.env.SMTP_PASSWORD) {
+      throw new Error('SMTP credentials not configured. Please set SMTP_USER and SMTP_PASSWORD environment variables.');
+    }
+
     // Note: It's createTransport (not createTransporter)
     const transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST || 'smtp.gmail.com',
-      port: parseInt(process.env.SMTP_PORT) || 587,
-      secure: false, // true for 465, false for other ports
+      port: parseInt(process.env.SMTP_PORT || '587'),
+      secure: process.env.SMTP_PORT === '465', // true for 465, false for other ports
       auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASSWORD
@@ -20,7 +33,9 @@ const createTransporter = () => {
       // Add these for better reliability
       tls: {
         rejectUnauthorized: false
-      }
+      },
+      debug: process.env.NODE_ENV === 'development', // Enable debug in development
+      logger: process.env.NODE_ENV === 'development' // Enable logging in development
     });
 
     return transporter;

@@ -1,20 +1,49 @@
 const nodemailer = require('nodemailer');
 
+// Create email transporter
 const createTransporter = () => {
-  return nodemailer.createTransporter({
-    host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: parseInt(process.env.SMTP_PORT || '587'),
-    secure: false, // true for 465, false for other ports
-    auth: {
-      user: process.env.SMTP_EMAIL,
-      pass: process.env.SMTP_PASSWORD
-    },
-    tls: {
-      rejectUnauthorized: false // For development; remove in production if using valid SSL
+  try {
+    // Verify nodemailer is loaded correctly
+    if (!nodemailer || typeof nodemailer.createTransport !== 'function') {
+      throw new Error('Nodemailer not properly loaded');
     }
-  });
-};
 
+    // Debug: Log environment variables (remove in production)
+    console.log('SMTP Configuration:', {
+      host: process.env.SMTP_HOST,
+      port: process.env.SMTP_PORT,
+      user: process.env.SMTP_EMAIL ? '***' : 'NOT SET',
+      pass: process.env.SMTP_PASSWORD ? '***' : 'NOT SET'
+    });
+
+    // Check if credentials are available
+    if (!process.env.SMTP_EMAIL || !process.env.SMTP_PASSWORD) {
+      throw new Error('SMTP credentials not configured. Please set SMTP_EMAIL and SMTP_PASSWORD environment variables.');
+    }
+
+    // Note: It's createTransport (not createTransporter)
+    const transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST || 'smtp.gmail.com',
+      port: parseInt(process.env.SMTP_PORT || '587'),
+      secure: process.env.SMTP_PORT === '465', // true for 465, false for other ports
+      auth: {
+        user: process.env.SMTP_EMAIL,
+        pass: process.env.SMTP_PASSWORD
+      },
+      // Add these for better reliability
+      tls: {
+        rejectUnauthorized: false
+      },
+      debug: process.env.NODE_ENV === 'development', // Enable debug in development
+      logger: process.env.NODE_ENV === 'development' // Enable logging in development
+    });
+
+    return transporter;
+  } catch (error) {
+    console.error('Error creating email transporter:', error);
+    throw error;
+  }
+};
 /**
  * Send OTP email to user
  * @param {string} email - User's email address

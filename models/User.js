@@ -94,8 +94,8 @@ const userSchema = new mongoose.Schema({
   lastLogin: Date,
   resetPasswordToken: String,
   resetPasswordExpire: Date,
-  emailVerificationToken: String,
-  emailVerificationExpire: Date
+  emailOTP: String,
+  emailOTPExpire: Date
 }, {
   timestamps: true,
   toJSON: { virtuals: true },
@@ -150,6 +150,29 @@ userSchema.methods.generateAuthToken = function() {
   );
 };
 
+// Generate email OTP (6 digit)
+userSchema.methods.generateEmailOTP = function() {
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  
+  this.emailOTP = otp;
+  this.emailOTPExpire = Date.now() + 10 * 60 * 1000; // 10 minutes
+  
+  return otp;
+};
+
+// Verify email OTP
+userSchema.methods.verifyEmailOTP = function(enteredOTP) {
+  if (!this.emailOTP || !this.emailOTPExpire) {
+    return false;
+  }
+  
+  if (Date.now() > this.emailOTPExpire) {
+    return false;
+  }
+  
+  return this.emailOTP === enteredOTP;
+};
+
 // Generate password reset token
 userSchema.methods.generatePasswordResetToken = function() {
   const resetToken = require('crypto').randomBytes(20).toString('hex');
@@ -164,20 +187,6 @@ userSchema.methods.generatePasswordResetToken = function() {
   return resetToken;
 };
 
-// Generate email verification token
-userSchema.methods.generateEmailVerificationToken = function() {
-  const verificationToken = require('crypto').randomBytes(20).toString('hex');
-  
-  this.emailVerificationToken = require('crypto')
-    .createHash('sha256')
-    .update(verificationToken)
-    .digest('hex');
-    
-  this.emailVerificationExpire = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
-  
-  return verificationToken;
-};
-
 // Update last login
 userSchema.methods.updateLastLogin = function() {
   this.lastLogin = new Date();
@@ -186,7 +195,6 @@ userSchema.methods.updateLastLogin = function() {
 
 // Add address
 userSchema.methods.addAddress = function(addressData) {
-  // If this is the default address, unset other defaults
   if (addressData.isDefault) {
     this.addresses.forEach(addr => {
       addr.isDefault = false;
@@ -207,7 +215,6 @@ userSchema.methods.updateAddress = function(addressId, addressData) {
     throw new Error('Address not found');
   }
   
-  // If this is being set as default, unset other defaults
   if (addressData.isDefault) {
     this.addresses.forEach(addr => {
       addr.isDefault = false;

@@ -5,7 +5,7 @@ const { body, validationResult } = require('express-validator');
 const User = require('../models/User');
 const { auth } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
-const { sendVerificationEmail,sendPasswordResetEmail } = require('../utils/emailService');
+const { sendOTPEmail } = require('../utils/emailService');
 
 const router = express.Router();
 
@@ -70,24 +70,20 @@ router.post('/register', [
     password
   });
 
-  // Generate email verification token
-  const verificationToken = user.generateEmailVerificationToken();
+  // Generate OTP
+  const otp = user.generateEmailOTP();
   await user.save({ validateBeforeSave: false });
 
-  // Create verification URL
-  const verificationUrl = `${req.protocol}://${req.get('host')}/api/v1/auth/verify-email/${verificationToken}`;
-
-  // Send verification email
+  // Send OTP email
   try {
-    await sendVerificationEmail(user.email, user.firstName, verificationUrl);
+    await sendOTPEmail(user.email, user.firstName, otp);
   } catch (error) {
-    console.error('Error sending verification email:', error);
-    // Continue registration even if email fails
+    console.error('Error sending OTP email:', error);
   }
 
   res.status(201).json({
     success: true,
-    message: 'Registration successful. Please check your email to verify your account.',
+    message: 'Registration successful. Please check your email for the OTP code.',
     requiresVerification: true,
     user: {
       id: user._id,
@@ -100,32 +96,52 @@ router.post('/register', [
   });
 }));
 
-// @desc    Verify email
-// @route   GET /api/v1/auth/verify-email/:token
+// @desc    Verify OTP
+// @route   POST /api/v1/auth/verify-otp
 // @access  Public
-router.get('/verify-email/:token', asyncHandler(async (req, res) => {
-  // Get hashed token
-  const hashedToken = require('crypto')
-    .createHash('sha256')
-    .update(req.params.token)
-    .digest('hex');
-
-  const user = await User.findOne({
-    emailVerificationToken: hashedToken,
-    emailVerificationExpire: { $gt: Date.now() }
-  });
-
-  if (!user) {
+router.post('/verify-otp', [
+  body('email')
+    .isEmail()
+    .normalizeEmail()
+    .withMessage('Please provide a valid email'),
+  body('otp')
+    .isLength({ min: 6, max: 6 })
+    .withMessage('OTP must be 6 digits')
+], asyncHandler(async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
     return res.status(400).json({
       success: false,
-      message: 'Invalid or expired verification token'
+      message: 'Validation failed',
+      errors: errors.array()
+    });
+  }
+
+  const { email, otp } = req.body;
+
+  const user = await User.findOne({ email });
+
+  if (!user) {
+    return res.status(404).json({
+      success: false,
+      message: 'User not found'
+    });
+  }
+
+  // Check if OTP is valid
+  const isValidOTP = await user.verifyEmailOTP(otp);
+
+  if (!isValidOTP) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid or expired OTP'
     });
   }
 
   // Mark email as verified
   user.emailVerified = true;
-  user.emailVerificationToken = undefined;
-  user.emailVerificationExpire = undefined;
+  user.emailOTP = undefined;
+  user.emailOTPExpire = undefined;
   await user.save({ validateBeforeSave: false });
 
   // Generate auth token
@@ -152,10 +168,10 @@ router.get('/verify-email/:token', asyncHandler(async (req, res) => {
   });
 }));
 
-// @desc    Resend verification email
-// @route   POST /api/v1/auth/resend-verification
+// @desc    Resend OTP
+// @route   POST /api/v1/auth/resend-otp
 // @access  Public
-router.post('/resend-verification', [
+router.post('/resend-otp', [
   body('email')
     .isEmail()
     .normalizeEmail()
@@ -188,26 +204,23 @@ router.post('/resend-verification', [
     });
   }
 
-  // Generate new verification token
-  const verificationToken = user.generateEmailVerificationToken();
+  // Generate new OTP
+  const otp = user.generateEmailOTP();
   await user.save({ validateBeforeSave: false });
 
-  // Create verification URL
-  const verificationUrl = `${req.protocol}://${req.get('host')}/api/v1/auth/verify-email/${verificationToken}`;
-
-  // Send verification email
+  // Send OTP email
   try {
-    await sendVerificationEmail(user.email, user.firstName, verificationUrl);
+    await sendOTPEmail(user.email, user.firstName, otp);
     
     res.json({
       success: true,
-      message: 'Verification email sent successfully'
+      message: 'OTP sent successfully'
     });
   } catch (error) {
-    console.error('Error sending verification email:', error);
+    console.error('Error sending OTP email:', error);
     return res.status(500).json({
       success: false,
-      message: 'Failed to send verification email'
+      message: 'Failed to send OTP'
     });
   }
 }));
@@ -241,7 +254,7 @@ router.post('/login', [
   if (!user) {
     return res.status(401).json({
       success: false,
-      message: 'Invalid credential'
+      message: 'Invalid credentials'
     });
   }
 
@@ -348,7 +361,6 @@ router.patch('/profile', [
 
   const { firstName, lastName, phone } = req.body;
 
-  // Check if phone number is already taken by another user
   if (phone) {
     const existingUser = await User.findOne({ 
       phone, 
@@ -411,10 +423,8 @@ router.patch('/change-password', [
 
   const { currentPassword, newPassword } = req.body;
 
-  // Get user with password
   const user = await User.findById(req.user.id).select('+password');
 
-  // Check current password
   const isCurrentPasswordCorrect = await user.matchPassword(currentPassword);
 
   if (!isCurrentPasswordCorrect) {
@@ -424,7 +434,6 @@ router.patch('/change-password', [
     });
   }
 
-  // Update password
   user.password = newPassword;
   await user.save();
 
@@ -441,117 +450,6 @@ router.post('/logout', auth, asyncHandler(async (req, res) => {
   res.json({
     success: true,
     message: 'Logout successful'
-  });
-}));
-
-// @desc    Forgot password
-// @route   POST /api/v1/auth/forgot-password
-// @access  Public
-router.post('/forgot-password', [
-  body('email')
-    .isEmail()
-    .normalizeEmail()
-    .withMessage('Please provide a valid email')
-], asyncHandler(async (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({
-      success: false,
-      message: 'Validation failed',
-      errors: errors.array()
-    });
-  }
-
-  const { email } = req.body;
-
-  const user = await User.findOne({ email });
-
-  if (!user) {
-    return res.status(404).json({
-      success: false,
-      message: 'User not found with that email'
-    });
-  }
-
-  // Generate reset token
-  const resetToken = user.generatePasswordResetToken();
-  await user.save({ validateBeforeSave: false });
-
-  // Create reset URL
-  const resetUrl = `${req.protocol}://${req.get('host')}/api/v1/auth/reset-password/${resetToken}`;
-
-  // Send password reset email
-  try {
-    await sendPasswordResetEmail(user.email, user.firstName, resetUrl);
-    res.json({
-      success: true,
-      message: 'Password reset email sent',
-      resetToken: process.env.NODE_ENV === 'development' ? resetToken : undefined
-    });
-  } catch (error) {
-    console.error('Error sending password reset email:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Failed to send password reset email'
-    });
-  }
-}));
-
-// @desc    Reset password
-// @route   POST /api/v1/auth/reset-password/:resetToken
-// @access  Public
-router.post('/reset-password/:resetToken', [
-  body('password')
-    .isLength({ min: 6 })
-    .withMessage('Password must be at least 6 characters long'),
-  body('confirmPassword')
-    .custom((value, { req }) => {
-      if (value !== req.body.password) {
-        throw new Error('Password confirmation does not match');
-      }
-      return true;
-    })
-], asyncHandler(async (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({
-      success: false,
-      message: 'Validation failed',
-      errors: errors.array()
-    });
-  }
-
-  // Get hashed token
-  const hashedToken = require('crypto')
-    .createHash('sha256')
-    .update(req.params.resetToken)
-    .digest('hex');
-
-  const user = await User.findOne({
-    resetPasswordToken: hashedToken,
-    resetPasswordExpire: { $gt: Date.now() }
-  });
-
-  if (!user) {
-    return res.status(400).json({
-      success: false,
-      message: 'Invalid or expired reset token'
-    });
-  }
-
-  // Set new password
-  user.password = req.body.password;
-  user.resetPasswordToken = undefined;
-  user.resetPasswordExpire = undefined;
-  await user.save();
-
-  // Generate new token
-  const token = user.generateAuthToken();
-
-  res.json({
-    success: true,
-    message: 'Password reset successful',
-    token
   });
 }));
 

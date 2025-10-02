@@ -5,7 +5,7 @@ const { body, validationResult } = require('express-validator');
 const User = require('../models/User');
 const { auth } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
-const { sendOTPEmail } = require('../utils/emailService');
+const { sendOTPEmail,sendPasswordResetOTPEmail } = require('../utils/emailService');
 
 const router = express.Router();
 
@@ -451,6 +451,265 @@ router.post('/logout', auth, asyncHandler(async (req, res) => {
     success: true,
     message: 'Logout successful'
   });
+}));
+// Add these routes to your auth routes file (after the existing routes)
+
+// @desc    Request password reset OTP
+// @route   POST /api/v1/auth/forgot-password
+// @access  Public
+router.post('/forgot-password', [
+  body('email')
+    .isEmail()
+    .normalizeEmail()
+    .withMessage('Please provide a valid email')
+], asyncHandler(async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      success: false,
+      message: 'Validation failed',
+      errors: errors.array()
+    });
+  }
+
+  const { email } = req.body;
+
+  const user = await User.findOne({ email });
+
+  if (!user) {
+    // Don't reveal if user exists or not for security
+    return res.status(200).json({
+      success: true,
+      message: 'If an account exists with that email, a password reset code has been sent.'
+    });
+  }
+
+  // Generate OTP for password reset
+  const otp = user.generatePasswordResetOTP();
+  await user.save({ validateBeforeSave: false });
+
+  // Send OTP email
+  try {
+    await sendPasswordResetOTPEmail(user.email, user.firstName, otp);
+    
+    res.status(200).json({
+      success: true,
+      message: 'Password reset code sent to your email'
+    });
+  } catch (error) {
+    // Clear OTP fields if email fails
+    user.resetPasswordOTP = undefined;
+    user.resetPasswordOTPExpire = undefined;
+    await user.save({ validateBeforeSave: false });
+    
+    console.error('Error sending password reset OTP email:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to send password reset code. Please try again.'
+    });
+  }
+}));
+
+// @desc    Verify password reset OTP
+// @route   POST /api/v1/auth/verify-reset-otp
+// @access  Public
+router.post('/verify-reset-otp', [
+  body('email')
+    .isEmail()
+    .normalizeEmail()
+    .withMessage('Please provide a valid email'),
+  body('otp')
+    .isLength({ min: 6, max: 6 })
+    .withMessage('OTP must be 6 digits')
+], asyncHandler(async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      success: false,
+      message: 'Validation failed',
+      errors: errors.array()
+    });
+  }
+
+  const { email, otp } = req.body;
+
+  const user = await User.findOne({ email });
+
+  if (!user) {
+    return res.status(404).json({
+      success: false,
+      message: 'User not found'
+    });
+  }
+
+  // Verify OTP
+  const isValidOTP = user.verifyPasswordResetOTP(otp);
+
+  if (!isValidOTP) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid or expired OTP'
+    });
+  }
+
+  // Generate a temporary token for password reset
+  const resetToken = user.generateAuthToken();
+
+  res.json({
+    success: true,
+    message: 'OTP verified successfully',
+    resetToken // This token will be used for the actual password reset
+  });
+}));
+
+// @desc    Reset password with verified OTP
+// @route   POST /api/v1/auth/reset-password
+// @access  Public (requires resetToken from verify-reset-otp)
+router.post('/reset-password', [
+  body('email')
+    .isEmail()
+    .normalizeEmail()
+    .withMessage('Please provide a valid email'),
+  body('resetToken')
+    .notEmpty()
+    .withMessage('Reset token is required'),
+  body('newPassword')
+    .isLength({ min: 6 })
+    .withMessage('Password must be at least 6 characters long'),
+  body('confirmPassword')
+    .custom((value, { req }) => {
+      if (value !== req.body.newPassword) {
+        throw new Error('Password confirmation does not match');
+      }
+      return true;
+    })
+], asyncHandler(async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      success: false,
+      message: 'Validation failed',
+      errors: errors.array()
+    });
+  }
+
+  const { email, resetToken, newPassword } = req.body;
+
+  try {
+    // Verify the reset token
+    const decoded = jwt.verify(resetToken, process.env.JWT_SECRET);
+    
+    if (decoded.email !== email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid reset token'
+      });
+    }
+
+    const user = await User.findOne({ email }).select('+password');
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Check if OTP was verified (it should still be valid)
+    if (!user.resetPasswordOTP || !user.resetPasswordOTPExpire) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please verify OTP first'
+      });
+    }
+
+    if (Date.now() > user.resetPasswordOTPExpire) {
+      return res.status(400).json({
+        success: false,
+        message: 'Reset session expired. Please request a new code.'
+      });
+    }
+
+    // Update password
+    user.password = newPassword;
+    user.resetPasswordOTP = undefined;
+    user.resetPasswordOTPExpire = undefined;
+    await user.save();
+
+    // Generate new auth token
+    const token = user.generateAuthToken();
+
+    res.json({
+      success: true,
+      message: 'Password reset successful',
+      token,
+      user: {
+        id: user._id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        phone: user.phone,
+        role: user.role
+      }
+    });
+  } catch (error) {
+    console.error('Reset password error:', error);
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid or expired reset token'
+    });
+  }
+}));
+
+// @desc    Resend password reset OTP
+// @route   POST /api/v1/auth/resend-reset-otp
+// @access  Public
+router.post('/resend-reset-otp', [
+  body('email')
+    .isEmail()
+    .normalizeEmail()
+    .withMessage('Please provide a valid email')
+], asyncHandler(async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      success: false,
+      message: 'Validation failed',
+      errors: errors.array()
+    });
+  }
+
+  const { email } = req.body;
+
+  const user = await User.findOne({ email });
+
+  if (!user) {
+    // Don't reveal if user exists or not
+    return res.status(200).json({
+      success: true,
+      message: 'If an account exists with that email, a new code has been sent.'
+    });
+  }
+
+  // Generate new OTP
+  const otp = user.generatePasswordResetOTP();
+  await user.save({ validateBeforeSave: false });
+
+  // Send OTP email
+  try {
+    await sendPasswordResetOTPEmail(user.email, user.firstName, otp);
+    
+    res.json({
+      success: true,
+      message: 'New password reset code sent successfully'
+    });
+  } catch (error) {
+    console.error('Error sending password reset OTP email:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to send password reset code'
+    });
+  }
 }));
 
 module.exports = router;

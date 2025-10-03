@@ -100,6 +100,26 @@ const offerSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  comboItems: [{
+  foodItem: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'FoodItem',
+    required: true
+  },
+  quantity: {
+    type: Number,
+    required: true,
+    min: 1,
+    default: 1
+  }
+}],
+comboPrice: {
+  type: Number,
+  required: function() {
+    return this.type === 'combo';
+  },
+  min: [0, 'Combo price cannot be negative']
+},
   startDate: {
     type: Date,
     required: true,

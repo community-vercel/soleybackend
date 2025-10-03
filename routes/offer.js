@@ -13,7 +13,7 @@ const router = express.Router();
 // @access  Public
 router.get('/', [
   query('featured').optional().isBoolean().withMessage('Featured must be boolean'),
-  query('type').optional().isIn(['percentage', 'fixed-amount', 'buy-one-get-one', 'free-delivery']).withMessage('Invalid offer type'),
+  query('type').optional().isIn(['percentage', 'fixed-amount', 'buy-one-get-one', 'free-delivery', 'combo']).withMessage('Invalid offer type'),
   query('page').optional().isInt({ min: 1 }).withMessage('Page must be positive integer'),
   query('limit').optional().isInt({ min: 1, max: 50 }).withMessage('Limit must be between 1 and 50')
 ], optionalAuth, asyncHandler(async (req, res) => {
@@ -312,7 +312,7 @@ router.post('/', [
   body('title').trim().notEmpty().withMessage('Title is required'),
   body('description').trim().notEmpty().withMessage('Description is required'),
   body('imageUrl').optional().isURL().withMessage('Valid image URL required'),
-  body('type').isIn(['percentage', 'fixed-amount', 'buy-one-get-one', 'free-delivery']).withMessage('Invalid offer type'),
+body('type').isIn(['percentage', 'fixed-amount', 'buy-one-get-one', 'free-delivery', 'combo']).withMessage('Invalid offer type'),
   body('startDate').isISO8601().withMessage('Valid start date is required'),
   body('endDate').isISO8601().withMessage('Valid end date is required'),
   body('value').optional().isFloat({ min: 0 }).withMessage('Value must be non-negative'),
@@ -355,6 +355,173 @@ router.post('/', [
     success: true,
     message: 'Offer created successfully',
     offer
+  });
+}));
+// @desc    Get single offer by ID
+// @route   GET /api/v1/offer/:id
+// @access  Public
+router.get('/:id', [
+  param('id').isMongoId().withMessage('Invalid offer ID')
+], optionalAuth, asyncHandler(async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      success: false,
+      message: 'Validation failed',
+      errors: errors.array()
+    });
+  }
+
+  const offer = await Offer.findById(req.params.id)
+    .populate({
+      path: 'appliedToItems',
+      select: 'name imageUrl price originalPrice category isActive',
+      populate: {
+        path: 'category',
+        select: 'name icon'
+      }
+    })
+    .populate('appliedToCategories', 'name icon')
+    .populate({
+      path: 'comboItems.foodItem',
+      select: 'name imageUrl price category'
+    });
+
+  if (!offer) {
+    return res.status(404).json({
+      success: false,
+      message: 'Offer not found'
+    });
+  }
+
+  res.json({
+    success: true,
+    offer
+  });
+}));
+
+// @desc    Update offer
+// @route   PUT /api/v1/offer/:id
+// @access  Private (Admin/Manager only)
+router.put('/:id', [
+  auth,
+  authorize('admin', 'manager'),
+  param('id').isMongoId().withMessage('Invalid offer ID'),
+  body('title').optional().trim().notEmpty().withMessage('Title cannot be empty'),
+  body('description').optional().trim().notEmpty().withMessage('Description cannot be empty'),
+  body('imageUrl').optional().isURL().withMessage('Valid image URL required'),
+  body('type').optional().isIn(['percentage', 'fixed-amount', 'buy-one-get-one', 'free-delivery', 'combo']).withMessage('Invalid offer type'),
+  body('startDate').optional().isISO8601().withMessage('Valid start date is required'),
+  body('endDate').optional().isISO8601().withMessage('Valid end date is required'),
+  body('value').optional().isFloat({ min: 0 }).withMessage('Value must be non-negative'),
+  body('comboPrice').optional().isFloat({ min: 0 }).withMessage('Combo price must be non-negative'),
+  body('appliedToItems').optional().isArray().withMessage('Applied items must be an array'),
+  body('comboItems').optional().isArray().withMessage('Combo items must be an array')
+], asyncHandler(async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      success: false,
+      message: 'Validation failed',
+      errors: errors.array()
+    });
+  }
+
+  const offer = await Offer.findById(req.params.id);
+  if (!offer) {
+    return res.status(404).json({
+      success: false,
+      message: 'Offer not found'
+    });
+  }
+
+  // Verify items exist if provided
+  if (req.body.appliedToItems && req.body.appliedToItems.length > 0) {
+    const items = await FoodItem.find({
+      _id: { $in: req.body.appliedToItems },
+      isActive: true
+    });
+
+    if (items.length !== req.body.appliedToItems.length) {
+      return res.status(400).json({
+        success: false,
+        message: 'Some items not found or inactive'
+      });
+    }
+  }
+
+  // Verify combo items if provided
+  if (req.body.comboItems && req.body.comboItems.length > 0) {
+    const comboItemIds = req.body.comboItems.map(item => item.foodItem);
+    const items = await FoodItem.find({
+      _id: { $in: comboItemIds },
+      isActive: true
+    });
+
+    if (items.length !== comboItemIds.length) {
+      return res.status(400).json({
+        success: false,
+        message: 'Some combo items not found or inactive'
+      });
+    }
+  }
+
+  // Update offer
+  Object.keys(req.body).forEach(key => {
+    offer[key] = req.body[key];
+  });
+
+  await offer.save();
+
+  await offer.populate([
+    {
+      path: 'appliedToItems',
+      select: 'name imageUrl price category',
+      populate: { path: 'category', select: 'name icon' }
+    },
+    {
+      path: 'comboItems.foodItem',
+      select: 'name imageUrl price category'
+    }
+  ]);
+
+  res.json({
+    success: true,
+    message: 'Offer updated successfully',
+    offer
+  });
+}));
+
+// @desc    Delete offer
+// @route   DELETE /api/v1/offer/:id
+// @access  Private (Admin/Manager only)
+router.delete('/:id', [
+  auth,
+  authorize('admin', 'manager'),
+  param('id').isMongoId().withMessage('Invalid offer ID')
+], asyncHandler(async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      success: false,
+      message: 'Validation failed',
+      errors: errors.array()
+    });
+  }
+
+  const offer = await Offer.findById(req.params.id);
+  if (!offer) {
+    return res.status(404).json({
+      success: false,
+      message: 'Offer not found'
+    });
+  }
+
+  await offer.deleteOne();
+
+  res.json({
+    success: true,
+    message: 'Offer deleted successfully'
   });
 }));
 

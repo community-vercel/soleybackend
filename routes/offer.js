@@ -204,8 +204,8 @@ router.get('/items-with-offers', asyncHandler(async (req, res) => {
 // @route   POST /api/v1/offers/:id/apply-to-items
 // @access  Private (Admin/Manager only)
 router.post('/:id/apply-to-items', [
-  auth,
-  authorize('admin', 'manager'),
+ auth,
+  authorize('admin'),
   param('id').isMongoId().withMessage('Invalid offer ID'),
   body('itemIds').isArray({ min: 1 }).withMessage('Item IDs array is required'),
   body('itemIds.*').isMongoId().withMessage('Invalid item ID')
@@ -265,7 +265,7 @@ router.post('/:id/apply-to-items', [
 // @access  Private (Admin/Manager only)
 router.delete('/:id/remove-from-items', [
   auth,
-  authorize('admin', 'manager'),
+  authorize('admin'),
   param('id').isMongoId().withMessage('Invalid offer ID'),
   body('itemIds').isArray({ min: 1 }).withMessage('Item IDs array is required'),
   body('itemIds.*').isMongoId().withMessage('Invalid item ID')
@@ -308,7 +308,7 @@ router.delete('/:id/remove-from-items', [
 // @access  Private (Admin/Manager only)
 router.post('/', [
   auth,
-  authorize('admin', 'manager'),
+  authorize('admin'),
   body('title').trim().notEmpty().withMessage('Title is required'),
   body('description').trim().notEmpty().withMessage('Description is required'),
   body('imageUrl').optional().isURL().withMessage('Valid image URL required'),
@@ -362,7 +362,7 @@ body('type').isIn(['percentage', 'fixed-amount', 'buy-one-get-one', 'free-delive
 // @access  Public
 router.get('/:id', [
   param('id').isMongoId().withMessage('Invalid offer ID')
-], optionalAuth, asyncHandler(async (req, res) => {
+],  asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({
@@ -404,8 +404,8 @@ router.get('/:id', [
 // @route   PUT /api/v1/offer/:id
 // @access  Private (Admin/Manager only)
 router.put('/:id', [
-  auth,
-  authorize('admin', 'manager'),
+ auth,
+  authorize('admin'),
   param('id').isMongoId().withMessage('Invalid offer ID'),
   body('title').optional().trim().notEmpty().withMessage('Title cannot be empty'),
   body('description').optional().trim().notEmpty().withMessage('Description cannot be empty'),

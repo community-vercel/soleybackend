@@ -1,18 +1,19 @@
 const express = require('express');
 const { body, param, query, validationResult } = require('express-validator');
 const Offer = require('../models/offer');
+const { FoodItem } = require('../models/Category');
 const { auth, authorize, optionalAuth } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const mongoose = require('mongoose');
 
 const router = express.Router();
 
-// @desc    Get all active offers
+// @desc    Get all active offers with applied items
 // @route   GET /api/v1/offers
 // @access  Public
 router.get('/', [
   query('featured').optional().isBoolean().withMessage('Featured must be boolean'),
-  query('type').optional().isIn(['percentage', 'fixed-amount', 'buy-one-get-one', 'free-delivery', 'combo']).withMessage('Invalid offer type'),
+  query('type').optional().isIn(['percentage', 'fixed-amount', 'buy-one-get-one', 'free-delivery']).withMessage('Invalid offer type'),
   query('page').optional().isInt({ min: 1 }).withMessage('Page must be positive integer'),
   query('limit').optional().isInt({ min: 1, max: 50 }).withMessage('Limit must be between 1 and 50')
 ], optionalAuth, asyncHandler(async (req, res) => {
@@ -45,135 +46,169 @@ router.get('/', [
   if (type) query.type = type;
 
   const offers = await Offer.find(query)
-    .populate('appliedToCategories', 'name')
-    .populate('appliedToItems', 'name imageUrl price')
+    .populate({
+      path: 'appliedToItems',
+      select: 'name imageUrl price originalPrice category isActive',
+      populate: {
+        path: 'category',
+        select: 'name icon'
+      }
+    })
+    .populate('appliedToCategories', 'name icon')
     .sort({ priority: -1, isFeatured: -1, createdAt: -1 })
     .limit(parseInt(limit))
     .skip(skip)
     .select('-usageHistory');
 
-  console.log('Offers before filtering:', offers.map(o => ({
-    id: o._id,
-    title: o.title,
-    isValid: o.isValid,
-    startDate: o.startDate,
-    endDate: o.endDate
-  })));
-
+  // Filter by user usage if authenticated
   let filteredOffers = offers;
   if (req.user) {
     if (!mongoose.Types.ObjectId.isValid(req.user.id)) {
       return res.status(400).json({ success: false, message: 'Invalid user ID' });
     }
-    filteredOffers = offers.filter(offer => {
-      const canUse = offer.canUserUse(req.user.id);
-      console.log(`Offer ${offer._id} canUserUse for user ${req.user.id}: ${canUse}`);
-      return canUse;
-    });
+    filteredOffers = offers.filter(offer => offer.canUserUse(req.user.id));
   }
+
+  // Calculate discounted prices for items
+  const offersWithPrices = filteredOffers.map(offer => {
+    const offerObj = offer.toObject();
+    
+    if (offerObj.appliedToItems && offerObj.appliedToItems.length > 0) {
+      offerObj.appliedToItems = offerObj.appliedToItems.map(item => {
+        const discountedPrice = calculateItemDiscount(item.price, offer);
+        return {
+          ...item,
+          discountedPrice,
+          savings: item.price - discountedPrice
+        };
+      });
+    }
+
+    return offerObj;
+  });
 
   const totalOffers = await Offer.countDocuments(query);
   const totalPages = Math.ceil(totalOffers / limit);
 
   res.json({
     success: true,
-    count: filteredOffers.length,
+    count: offersWithPrices.length,
     totalOffers,
     totalPages,
     currentPage: parseInt(page),
-    offers: filteredOffers
+    offers: offersWithPrices
   });
 }));
 
-// @desc    Get featured offers
-// @route   GET /api/v1/offers/featured
+// Helper function to calculate item discount
+function calculateItemDiscount(originalPrice, offer) {
+  if (!offer.isValid) return originalPrice;
+  
+  let discountedPrice = originalPrice;
+  
+  switch (offer.type) {
+    case 'percentage':
+      discountedPrice = originalPrice * (1 - offer.value / 100);
+      if (offer.maxDiscountAmount) {
+        const maxDiscount = originalPrice - offer.maxDiscountAmount;
+        discountedPrice = Math.max(discountedPrice, maxDiscount);
+      }
+      break;
+      
+    case 'fixed-amount':
+      discountedPrice = Math.max(0, originalPrice - offer.value);
+      break;
+      
+    case 'buy-one-get-one':
+      // For BOGO, return half price (assuming quantity of 2)
+      discountedPrice = originalPrice / 2;
+      break;
+  }
+  
+  return Math.round(discountedPrice * 100) / 100;
+}
+
+// @desc    Get food items with active offers
+// @route   GET /api/v1/offers/items-with-offers
 // @access  Public
-router.get('/featured', optionalAuth, asyncHandler(async (req, res) => {
+router.get('/items-with-offers', asyncHandler(async (req, res) => {
   const now = new Date();
 
-  const offers = await Offer.find({
+  // Find all active offers
+  const activeOffers = await Offer.find({
     isActive: true,
-    isFeatured: true,
     startDate: { $lte: now },
-    endDate: { $gte: now }
-  })
-  .populate('appliedToCategories', 'name')
-  .populate('appliedToItems', 'name imageUrl price')
-  .sort({ priority: -1, createdAt: -1 })
-  .limit(6)
-  .select('-usageHistory');
+    endDate: { $gte: now },
+    appliedToItems: { $exists: true, $ne: [] }
+  }).populate('appliedToItems');
 
-  // Filter offers that user can still use (if authenticated)
-  let filteredOffers = offers;
-  if (req.user) {
-    filteredOffers = offers.filter(offer => offer.canUserUse(req.user.id));
-  }
+  // Get unique food items from all offers
+  const itemIds = new Set();
+  activeOffers.forEach(offer => {
+    offer.appliedToItems.forEach(item => {
+      if (item._id) itemIds.add(item._id.toString());
+    });
+  });
+
+  // Fetch full item details
+  const items = await FoodItem.find({
+    _id: { $in: Array.from(itemIds) },
+    isActive: true
+  }).populate('category', 'name icon');
+
+  // Attach best offer to each item
+  const itemsWithOffers = items.map(item => {
+    const itemOffers = activeOffers.filter(offer =>
+      offer.appliedToItems.some(oi => oi._id.toString() === item._id.toString())
+    );
+
+    // Find best offer (highest discount)
+    let bestOffer = null;
+    let bestDiscountedPrice = item.price;
+    let bestSavings = 0;
+
+    itemOffers.forEach(offer => {
+      const discountedPrice = calculateItemDiscount(item.price, offer);
+      const savings = item.price - discountedPrice;
+      
+      if (savings > bestSavings) {
+        bestOffer = {
+          id: offer._id,
+          title: offer.title,
+          type: offer.type,
+          value: offer.value,
+          badge: offer.discountDisplay
+        };
+        bestDiscountedPrice = discountedPrice;
+        bestSavings = savings;
+      }
+    });
+
+    return {
+      ...item.toObject(),
+      offer: bestOffer,
+      discountedPrice: bestDiscountedPrice,
+      savings: bestSavings,
+      discountPercentage: bestSavings > 0 ? Math.round((bestSavings / item.price) * 100) : 0
+    };
+  });
 
   res.json({
     success: true,
-    count: filteredOffers.length,
-    offers: filteredOffers
+    count: itemsWithOffers.length,
+    items: itemsWithOffers
   });
 }));
 
-// @desc    Get single offer
-// @route   GET /api/v1/offers/:id
-// @access  Public
-router.get('/:id', [
-  param('id').isMongoId().withMessage('Invalid offer ID')
-], optionalAuth, asyncHandler(async (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({
-      success: false,
-      message: 'Validation failed',
-      errors: errors.array()
-    });
-  }
-
-  const offer = await Offer.findById(req.params.id)
-    .populate('appliedToCategories', 'name')
-    .populate('appliedToItems', 'name imageUrl price')
-    .select('-usageHistory');
-
-  if (!offer) {
-    return res.status(404).json({
-      success: false,
-      message: 'Offer not found'
-    });
-  }
-
-  if (!offer.isActive) {
-    return res.status(404).json({
-      success: false,
-      message: 'Offer is not available'
-    });
-  }
-
-  // Check if user can use this offer
-  let userCanUse = true;
-  if (req.user) {
-    userCanUse = offer.canUserUse(req.user.id);
-  }
-
-  res.json({
-    success: true,
-    offer: {
-      ...offer.toJSON(),
-      userCanUse
-    }
-  });
-}));
-
-// @desc    Validate coupon code
-// @route   POST /api/v1/offers/validate-coupon
-// @access  Private
-router.post('/validate-coupon', [
+// @desc    Apply offer to food items
+// @route   POST /api/v1/offers/:id/apply-to-items
+// @access  Private (Admin/Manager only)
+router.post('/:id/apply-to-items', [
   auth,
-  body('couponCode').trim().notEmpty().withMessage('Coupon code is required'),
-  body('orderDetails.subtotal').isFloat({ min: 0 }).withMessage('Subtotal must be non-negative'),
-  body('orderDetails.items').isArray({ min: 1 }).withMessage('Order must contain items'),
-  body('orderDetails.deliveryType').isIn(['delivery', 'pickup']).withMessage('Invalid delivery type')
+  authorize('admin', 'manager'),
+  param('id').isMongoId().withMessage('Invalid offer ID'),
+  body('itemIds').isArray({ min: 1 }).withMessage('Item IDs array is required'),
+  body('itemIds.*').isMongoId().withMessage('Invalid item ID')
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -184,48 +219,91 @@ router.post('/validate-coupon', [
     });
   }
 
-  const { couponCode, orderDetails } = req.body;
+  const { itemIds } = req.body;
 
-  const offer = await Offer.findByCouponCode(couponCode);
-
+  const offer = await Offer.findById(req.params.id);
   if (!offer) {
     return res.status(404).json({
       success: false,
-      message: 'Invalid coupon code'
+      message: 'Offer not found'
     });
   }
 
-  // Check if user can use this offer
-  if (!offer.canUserUse(req.user.id)) {
+  // Verify all items exist and are active
+  const items = await FoodItem.find({
+    _id: { $in: itemIds },
+    isActive: true
+  });
+
+  if (items.length !== itemIds.length) {
     return res.status(400).json({
       success: false,
-      message: 'You have already used this coupon'
+      message: 'Some items not found or inactive'
     });
   }
 
-  // Calculate discount
-  const discountResult = offer.calculateDiscount(orderDetails);
+  // Update offer with items
+  offer.appliedToItems = itemIds;
+  await offer.save();
 
-  if (!discountResult.valid) {
-    return res.status(400).json({
-      success: false,
-      message: discountResult.reason
-    });
-  }
+  // Populate items for response
+  await offer.populate({
+    path: 'appliedToItems',
+    select: 'name imageUrl price category',
+    populate: { path: 'category', select: 'name icon' }
+  });
 
   res.json({
     success: true,
-    message: 'Coupon code is valid',
-    offer: {
-      id: offer._id,
-      title: offer.title,
-      type: offer.type,
-      discountAmount: discountResult.discount
-    }
+    message: 'Offer applied to items successfully',
+    offer
   });
 }));
 
-// @desc    Create offer (Admin/Manager only)
+// @desc    Remove offer from food items
+// @route   DELETE /api/v1/offers/:id/remove-from-items
+// @access  Private (Admin/Manager only)
+router.delete('/:id/remove-from-items', [
+  auth,
+  authorize('admin', 'manager'),
+  param('id').isMongoId().withMessage('Invalid offer ID'),
+  body('itemIds').isArray({ min: 1 }).withMessage('Item IDs array is required'),
+  body('itemIds.*').isMongoId().withMessage('Invalid item ID')
+], asyncHandler(async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      success: false,
+      message: 'Validation failed',
+      errors: errors.array()
+    });
+  }
+
+  const { itemIds } = req.body;
+
+  const offer = await Offer.findById(req.params.id);
+  if (!offer) {
+    return res.status(404).json({
+      success: false,
+      message: 'Offer not found'
+    });
+  }
+
+  // Remove specified items from offer
+  offer.appliedToItems = offer.appliedToItems.filter(
+    item => !itemIds.includes(item.toString())
+  );
+  
+  await offer.save();
+
+  res.json({
+    success: true,
+    message: 'Items removed from offer successfully',
+    offer
+  });
+}));
+
+// @desc    Create offer with items (Admin/Manager only)
 // @route   POST /api/v1/offers
 // @access  Private (Admin/Manager only)
 router.post('/', [
@@ -233,12 +311,13 @@ router.post('/', [
   authorize('admin', 'manager'),
   body('title').trim().notEmpty().withMessage('Title is required'),
   body('description').trim().notEmpty().withMessage('Description is required'),
-  body('imageUrl').isURL().withMessage('Valid image URL is required'),
-  body('type').isIn(['percentage', 'fixed-amount', 'buy-one-get-one', 'free-delivery', 'combo']).withMessage('Invalid offer type'),
+  body('imageUrl').optional().isURL().withMessage('Valid image URL required'),
+  body('type').isIn(['percentage', 'fixed-amount', 'buy-one-get-one', 'free-delivery']).withMessage('Invalid offer type'),
   body('startDate').isISO8601().withMessage('Valid start date is required'),
   body('endDate').isISO8601().withMessage('Valid end date is required'),
   body('value').optional().isFloat({ min: 0 }).withMessage('Value must be non-negative'),
-  body('minOrderAmount').optional().isFloat({ min: 0 }).withMessage('Minimum order amount must be non-negative')
+  body('appliedToItems').optional().isArray().withMessage('Applied items must be an array'),
+  body('appliedToItems.*').optional().isMongoId().withMessage('Invalid item ID')
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -249,144 +328,33 @@ router.post('/', [
     });
   }
 
+  // Verify items exist if provided
+  if (req.body.appliedToItems && req.body.appliedToItems.length > 0) {
+    const items = await FoodItem.find({
+      _id: { $in: req.body.appliedToItems },
+      isActive: true
+    });
+
+    if (items.length !== req.body.appliedToItems.length) {
+      return res.status(400).json({
+        success: false,
+        message: 'Some items not found or inactive'
+      });
+    }
+  }
+
   const offer = await Offer.create(req.body);
+  
+  await offer.populate({
+    path: 'appliedToItems',
+    select: 'name imageUrl price category',
+    populate: { path: 'category', select: 'name icon' }
+  });
 
   res.status(201).json({
     success: true,
     message: 'Offer created successfully',
     offer
-  });
-}));
-
-// @desc    Update offer (Admin/Manager only)
-// @route   PUT /api/v1/offers/:id
-// @access  Private (Admin/Manager only)
-router.put('/:id', [
-  auth,
-  authorize('admin', 'manager'),
-  param('id').isMongoId().withMessage('Invalid offer ID'),
-  body('title').optional().trim().notEmpty().withMessage('Title cannot be empty'),
-  body('description').optional().trim().notEmpty().withMessage('Description cannot be empty'),
-  body('imageUrl').optional().isURL().withMessage('Valid image URL is required'),
-  body('type').optional().isIn(['percentage', 'fixed-amount', 'buy-one-get-one', 'free-delivery', 'combo']).withMessage('Invalid offer type'),
-  body('startDate').optional().isISO8601().withMessage('Valid start date is required'),
-  body('endDate').optional().isISO8601().withMessage('Valid end date is required'),
-  body('value').optional().isFloat({ min: 0 }).withMessage('Value must be non-negative'),
-  body('minOrderAmount').optional().isFloat({ min: 0 }).withMessage('Minimum order amount must be non-negative')
-], asyncHandler(async (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({
-      success: false,
-      message: 'Validation failed',
-      errors: errors.array()
-    });
-  }
-
-  let offer = await Offer.findById(req.params.id);
-
-  if (!offer) {
-    return res.status(404).json({
-      success: false,
-      message: 'Offer not found'
-    });
-  }
-
-  offer = await Offer.findByIdAndUpdate(
-    req.params.id,
-    req.body,
-    { new: true, runValidators: true }
-  );
-
-  res.json({
-    success: true,
-    message: 'Offer updated successfully',
-    offer
-  });
-}));
-
-// @desc    Delete offer (Admin only)
-// @route   DELETE /api/v1/offers/:id
-// @access  Private (Admin only)
-router.delete('/:id', [
-  auth,
-  authorize('admin'),
-  param('id').isMongoId().withMessage('Invalid offer ID')
-], asyncHandler(async (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({
-      success: false,
-      message: 'Validation failed',
-      errors: errors.array()
-    });
-  }
-
-  const offer = await Offer.findById(req.params.id);
-
-  if (!offer) {
-    return res.status(404).json({
-      success: false,
-      message: 'Offer not found'
-    });
-  }
-
-  await offer.deleteOne();
-
-  res.json({
-    success: true,
-    message: 'Offer deleted successfully'
-  });
-}));
-
-// @desc    Get offer usage statistics (Admin/Manager only)
-// @route   GET /api/v1/offers/:id/stats
-// @access  Private (Admin/Manager only)
-router.get('/:id/stats', [
-  auth,
-  authorize('admin', 'manager'),
-  param('id').isMongoId().withMessage('Invalid offer ID')
-], asyncHandler(async (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({
-      success: false,
-      message: 'Validation failed',
-      errors: errors.array()
-    });
-  }
-
-  const offer = await Offer.findById(req.params.id)
-    .populate('usageHistory.user', 'firstName lastName email')
-    .populate('usageHistory.order', 'orderNumber total createdAt');
-
-  if (!offer) {
-    return res.status(404).json({
-      success: false,
-      message: 'Offer not found'
-    });
-  }
-
-  const stats = {
-    totalUsage: offer.usageCount,
-    remainingUses: offer.remainingUses,
-    totalDiscountGiven: offer.usageHistory.reduce((sum, usage) => sum + usage.discountAmount, 0),
-    averageDiscountPerUse: offer.usageCount > 0 
-      ? offer.usageHistory.reduce((sum, usage) => sum + usage.discountAmount, 0) / offer.usageCount 
-      : 0,
-    uniqueUsers: new Set(offer.usageHistory.map(usage => usage.user._id.toString())).size,
-    recentUsage: offer.usageHistory.slice(-10) // Last 10 uses
-  };
-
-  res.json({
-    success: true,
-    offer: {
-      id: offer._id,
-      title: offer.title,
-      couponCode: offer.couponCode,
-      isValid: offer.isValid
-    },
-    stats
   });
 }));
 

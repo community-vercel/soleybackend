@@ -54,7 +54,7 @@ const sendOTPEmail = async (email, firstName, otp) => {
   const transporter = createTransporter();
 
   const mailOptions = {
-    from: `"${process.env.APP_NAME || 'Soely'}" <${process.env.FROM_EMAIL || process.env.SMTP_EMAIL}>`,
+    from: `"${process.env.APP_NAME || 'Saborly'}" <${process.env.FROM_EMAIL || process.env.SMTP_EMAIL}>`,
     to: email,
     subject: 'Your Verification Code',
     html: `
@@ -168,11 +168,11 @@ const sendOTPEmail = async (email, firstName, otp) => {
       <body>
         <div class="container">
           <div class="header">
-            <h1>${process.env.APP_NAME || 'Soely'}</h1>
+            <h1>${process.env.APP_NAME || 'Saborly'}</h1>
           </div>
           <div class="content">
             <h2>Hi ${firstName}!</h2>
-            <p>Thank you for signing up with ${process.env.APP_NAME || 'Soely'}!</p>
+            <p>Thank you for signing up with ${process.env.APP_NAME || 'Saborly'}!</p>
             <p>To verify your email address, please use the following One-Time Password (OTP):</p>
             
             <div class="otp-container">
@@ -189,11 +189,11 @@ const sendOTPEmail = async (email, firstName, otp) => {
             </div>
             
             <p style="color: #999; font-size: 13px; margin-top: 30px;">
-              For security reasons, never share this OTP with anyone. ${process.env.APP_NAME || 'Soely'} will never ask you for this code.
+              For security reasons, never share this OTP with anyone. ${process.env.APP_NAME || 'Saborly'} will never ask you for this code.
             </p>
           </div>
           <div class="footer">
-            <p><strong>${process.env.APP_NAME || 'Soely'}</strong></p>
+            <p><strong>${process.env.APP_NAME || 'Saborly'}</strong></p>
             <p>If you have any questions, please contact our support team.</p>
             <p style="margin-top: 15px; color: #999; font-size: 12px;">
               This is an automated email. Please do not reply to this message.
@@ -206,7 +206,7 @@ const sendOTPEmail = async (email, firstName, otp) => {
     text: `
 Hi ${firstName}!
 
-Thank you for signing up with ${process.env.APP_NAME || 'Soely'}!
+Thank you for signing up with ${process.env.APP_NAME || 'Saborly'}!
 
 To verify your email address, please use the following One-Time Password (OTP):
 
@@ -219,7 +219,7 @@ Important:
 
 Enter this code in the verification screen of the app to complete your registration.
 
-${process.env.APP_NAME || 'Soely'}
+${process.env.APP_NAME || 'Saborly'}
     `
   };
 
@@ -243,7 +243,7 @@ const sendPasswordResetOTPEmail = async (email, firstName, otp) => {
   const transporter = createTransporter();
 
   const mailOptions = {
-    from: `"${process.env.APP_NAME || 'Soely'}" <${process.env.FROM_EMAIL || process.env.SMTP_EMAIL}>`,
+    from: `"${process.env.APP_NAME || 'Saborly'}" <${process.env.FROM_EMAIL || process.env.SMTP_EMAIL}>`,
     to: email,
     subject: 'Password Reset Code',
     html: `
@@ -369,7 +369,7 @@ const sendPasswordResetOTPEmail = async (email, firstName, otp) => {
       <body>
         <div class="container">
           <div class="header">
-            <h1>${process.env.APP_NAME || 'Soely'}</h1>
+            <h1>${process.env.APP_NAME || 'Saborly'}</h1>
           </div>
           <div class="content">
             <h2>Hi ${firstName}!</h2>
@@ -390,7 +390,7 @@ const sendPasswordResetOTPEmail = async (email, firstName, otp) => {
             </div>
             
             <div class="security-box">
-              <p><strong>Security Notice:</strong> Never share this OTP with anyone. ${process.env.APP_NAME || 'Soely'} staff will never ask you for this code via email, phone, or any other means.</p>
+              <p><strong>Security Notice:</strong> Never share this OTP with anyone. ${process.env.APP_NAME || 'Saborly'} staff will never ask you for this code via email, phone, or any other means.</p>
             </div>
             
             <p style="color: #999; font-size: 13px; margin-top: 30px;">
@@ -398,7 +398,7 @@ const sendPasswordResetOTPEmail = async (email, firstName, otp) => {
             </p>
           </div>
           <div class="footer">
-            <p><strong>${process.env.APP_NAME || 'Soely'}</strong></p>
+            <p><strong>${process.env.APP_NAME || 'Saborly'}</strong></p>
             <p>If you have any questions or concerns, please contact our support team immediately.</p>
             <p style="margin-top: 15px; color: #999; font-size: 12px;">
               This is an automated email. Please do not reply to this message.
@@ -411,7 +411,7 @@ const sendPasswordResetOTPEmail = async (email, firstName, otp) => {
     text: `
 Hi ${firstName}!
 
-We received a request to reset your password for your ${process.env.APP_NAME || 'Soely'} account.
+We received a request to reset your password for your ${process.env.APP_NAME || 'Saborly'} account.
 
 To reset your password, please use the following One-Time Password (OTP):
 
@@ -426,7 +426,7 @@ Enter this code in the password reset screen of the app to verify your identity 
 
 If you didn't request this password reset, someone may be trying to access your account. Please change your password immediately and contact our support team.
 
-${process.env.APP_NAME || 'Soely'}
+${process.env.APP_NAME || 'Saborly'}
     `
   };
 

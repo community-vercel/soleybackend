@@ -5,11 +5,24 @@ const { body, validationResult } = require('express-validator');
 const User = require('../models/User');
 const { auth } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
-const { sendOTPEmail,sendPasswordResetOTPEmail } = require('../utils/emailService');
+const { sendOTPEmail, sendPasswordResetOTPEmail } = require('../utils/emailService');
 
 const router = express.Router();
 
-// @desc    Register user
+// Temporary storage for pending registrations (in production, use Redis)
+const pendingRegistrations = new Map();
+
+// Clean up expired registrations every 15 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [email, data] of pendingRegistrations.entries()) {
+    if (now > data.otpExpire) {
+      pendingRegistrations.delete(email);
+    }
+  }
+}, 15 * 60 * 1000);
+
+// @desc    Request registration OTP (Step 1)
 // @route   POST /api/v1/auth/register
 // @access  Public
 router.post('/register', [
@@ -61,45 +74,52 @@ router.post('/register', [
     });
   }
 
-  // Create user
-  const user = await User.create({
+  // Generate OTP
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  const otpExpire = Date.now() + 10 * 60 * 1000; // 10 minutes
+
+  // Hash password before storing temporarily
+  const salt = await bcrypt.genSalt(10);
+  const hashedPassword = await bcrypt.hash(password, salt);
+
+  // Store registration data temporarily
+  pendingRegistrations.set(email, {
     firstName,
     lastName,
     email,
     phone,
-    password
+    password: hashedPassword,
+    otp,
+    otpExpire,
+    createdAt: Date.now()
   });
-
-  // Generate OTP
-  const otp = user.generateEmailOTP();
-  await user.save({ validateBeforeSave: false });
 
   // Send OTP email
   try {
-    await sendOTPEmail(user.email, user.firstName, otp);
+    await sendOTPEmail(email, firstName, otp);
+    
+    res.status(200).json({
+      success: true,
+      message: 'Verification code sent to your email. Please verify to complete registration.',
+      requiresVerification: true,
+      email
+    });
   } catch (error) {
+    // Remove from pending if email fails
+    pendingRegistrations.delete(email);
     console.error('Error sending OTP email:', error);
+    
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to send verification code. Please try again.'
+    });
   }
-
-  res.status(201).json({
-    success: true,
-    message: 'Registration successful. Please check your email for the OTP code.',
-    requiresVerification: true,
-    user: {
-      id: user._id,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      email: user.email,
-      phone: user.phone,
-      emailVerified: user.emailVerified
-    }
-  });
 }));
 
-// @desc    Verify OTP
-// @route   POST /api/v1/auth/verify-otp
+// @desc    Verify OTP and complete registration (Step 2)
+// @route   POST /api/v1/auth/verify-registration
 // @access  Public
-router.post('/verify-otp', [
+router.post('/verify-registration', [
   body('email')
     .isEmail()
     .normalizeEmail()
@@ -119,30 +139,58 @@ router.post('/verify-otp', [
 
   const { email, otp } = req.body;
 
-  const user = await User.findOne({ email });
+  // Get pending registration
+  const pendingData = pendingRegistrations.get(email);
 
-  if (!user) {
+  if (!pendingData) {
     return res.status(404).json({
       success: false,
-      message: 'User not found'
+      message: 'Registration session not found or expired. Please register again.'
     });
   }
 
-  // Check if OTP is valid
-  const isValidOTP = await user.verifyEmailOTP(otp);
-
-  if (!isValidOTP) {
+  // Check if OTP is expired
+  if (Date.now() > pendingData.otpExpire) {
+    pendingRegistrations.delete(email);
     return res.status(400).json({
       success: false,
-      message: 'Invalid or expired OTP'
+      message: 'OTP has expired. Please register again.'
     });
   }
 
-  // Mark email as verified
-  user.emailVerified = true;
-  user.emailOTP = undefined;
-  user.emailOTPExpire = undefined;
-  await user.save({ validateBeforeSave: false });
+  // Verify OTP
+  if (pendingData.otp !== otp) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid OTP'
+    });
+  }
+
+  // Check again if user was created in the meantime
+  const existingUser = await User.findOne({ 
+    $or: [{ email: pendingData.email }, { phone: pendingData.phone }] 
+  });
+
+  if (existingUser) {
+    pendingRegistrations.delete(email);
+    return res.status(400).json({
+      success: false,
+      message: 'User already registered. Please login.'
+    });
+  }
+
+  // Create user (password is already hashed)
+  const user = await User.create({
+    firstName: pendingData.firstName,
+    lastName: pendingData.lastName,
+    email: pendingData.email,
+    phone: pendingData.phone,
+    password: pendingData.password,
+    emailVerified: true // Mark as verified since OTP was confirmed
+  });
+
+  // Remove from pending registrations
+  pendingRegistrations.delete(email);
 
   // Generate auth token
   const token = user.generateAuthToken();
@@ -150,9 +198,9 @@ router.post('/verify-otp', [
   // Update last login
   await user.updateLastLogin();
 
-  res.json({
+  res.status(201).json({
     success: true,
-    message: 'Email verified successfully',
+    message: 'Registration completed successfully',
     token,
     user: {
       id: user._id,
@@ -160,7 +208,6 @@ router.post('/verify-otp', [
       lastName: user.lastName,
       email: user.email,
       phone: user.phone,
-      token: token,
       role: user.role,
       emailVerified: user.emailVerified,
       phoneVerified: user.phoneVerified
@@ -168,10 +215,10 @@ router.post('/verify-otp', [
   });
 }));
 
-// @desc    Resend OTP
-// @route   POST /api/v1/auth/resend-otp
+// @desc    Resend registration OTP
+// @route   POST /api/v1/auth/resend-registration-otp
 // @access  Public
-router.post('/resend-otp', [
+router.post('/resend-registration-otp', [
   body('email')
     .isEmail()
     .normalizeEmail()
@@ -188,39 +235,38 @@ router.post('/resend-otp', [
 
   const { email } = req.body;
 
-  const user = await User.findOne({ email });
+  // Check if there's a pending registration
+  const pendingData = pendingRegistrations.get(email);
 
-  if (!user) {
+  if (!pendingData) {
     return res.status(404).json({
       success: false,
-      message: 'User not found with that email'
-    });
-  }
-
-  if (user.emailVerified) {
-    return res.status(400).json({
-      success: false,
-      message: 'Email is already verified'
+      message: 'No pending registration found. Please start registration again.'
     });
   }
 
   // Generate new OTP
-  const otp = user.generateEmailOTP();
-  await user.save({ validateBeforeSave: false });
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  const otpExpire = Date.now() + 10 * 60 * 1000;
+
+  // Update pending registration with new OTP
+  pendingData.otp = otp;
+  pendingData.otpExpire = otpExpire;
+  pendingRegistrations.set(email, pendingData);
 
   // Send OTP email
   try {
-    await sendOTPEmail(user.email, user.firstName, otp);
+    await sendOTPEmail(email, pendingData.firstName, otp);
     
     res.json({
       success: true,
-      message: 'OTP sent successfully'
+      message: 'New verification code sent successfully'
     });
   } catch (error) {
     console.error('Error sending OTP email:', error);
     return res.status(500).json({
       success: false,
-      message: 'Failed to send OTP'
+      message: 'Failed to send verification code'
     });
   }
 }));
@@ -276,16 +322,6 @@ router.post('/login', [
     });
   }
 
-  // Check if email is verified
-  if (!user.emailVerified) {
-    return res.status(403).json({
-      success: false,
-      message: 'Please verify your email before logging in',
-      requiresVerification: true,
-      email: user.email
-    });
-  }
-
   // Generate token
   const token = user.generateAuthToken();
 
@@ -301,7 +337,6 @@ router.post('/login', [
       firstName: user.firstName,
       lastName: user.lastName,
       email: user.email,
-      token: token,
       phone: user.phone,
       role: user.role,
       emailVerified: user.emailVerified,
@@ -452,7 +487,6 @@ router.post('/logout', auth, asyncHandler(async (req, res) => {
     message: 'Logout successful'
   });
 }));
-// Add these routes to your auth routes file (after the existing routes)
 
 // @desc    Request password reset OTP
 // @route   POST /api/v1/auth/forgot-password
@@ -477,18 +511,15 @@ router.post('/forgot-password', [
   const user = await User.findOne({ email });
 
   if (!user) {
-    // Don't reveal if user exists or not for security
     return res.status(200).json({
       success: true,
       message: 'If an account exists with that email, a password reset code has been sent.'
     });
   }
 
-  // Generate OTP for password reset
   const otp = user.generatePasswordResetOTP();
   await user.save({ validateBeforeSave: false });
 
-  // Send OTP email
   try {
     await sendPasswordResetOTPEmail(user.email, user.firstName, otp);
     
@@ -497,7 +528,6 @@ router.post('/forgot-password', [
       message: 'Password reset code sent to your email'
     });
   } catch (error) {
-    // Clear OTP fields if email fails
     user.resetPasswordOTP = undefined;
     user.resetPasswordOTPExpire = undefined;
     await user.save({ validateBeforeSave: false });
@@ -542,7 +572,6 @@ router.post('/verify-reset-otp', [
     });
   }
 
-  // Verify OTP
   const isValidOTP = user.verifyPasswordResetOTP(otp);
 
   if (!isValidOTP) {
@@ -552,19 +581,18 @@ router.post('/verify-reset-otp', [
     });
   }
 
-  // Generate a temporary token for password reset
   const resetToken = user.generateAuthToken();
 
   res.json({
     success: true,
     message: 'OTP verified successfully',
-    resetToken // This token will be used for the actual password reset
+    resetToken
   });
 }));
 
 // @desc    Reset password with verified OTP
 // @route   POST /api/v1/auth/reset-password
-// @access  Public (requires resetToken from verify-reset-otp)
+// @access  Public
 router.post('/reset-password', [
   body('email')
     .isEmail()
@@ -596,7 +624,6 @@ router.post('/reset-password', [
   const { email, resetToken, newPassword } = req.body;
 
   try {
-    // Verify the reset token
     const decoded = jwt.verify(resetToken, process.env.JWT_SECRET);
     
     if (decoded.email !== email) {
@@ -615,7 +642,6 @@ router.post('/reset-password', [
       });
     }
 
-    // Check if OTP was verified (it should still be valid)
     if (!user.resetPasswordOTP || !user.resetPasswordOTPExpire) {
       return res.status(400).json({
         success: false,
@@ -630,13 +656,11 @@ router.post('/reset-password', [
       });
     }
 
-    // Update password
     user.password = newPassword;
     user.resetPasswordOTP = undefined;
     user.resetPasswordOTPExpire = undefined;
     await user.save();
 
-    // Generate new auth token
     const token = user.generateAuthToken();
 
     res.json({
@@ -684,18 +708,15 @@ router.post('/resend-reset-otp', [
   const user = await User.findOne({ email });
 
   if (!user) {
-    // Don't reveal if user exists or not
     return res.status(200).json({
       success: true,
       message: 'If an account exists with that email, a new code has been sent.'
     });
   }
 
-  // Generate new OTP
   const otp = user.generatePasswordResetOTP();
   await user.save({ validateBeforeSave: false });
 
-  // Send OTP email
   try {
     await sendPasswordResetOTPEmail(user.email, user.firstName, otp);
     

@@ -345,18 +345,14 @@ orderSchema.methods.addRating = function(ratingData) {
 };
 
 // Static method to get order statistics
-orderSchema.statics.getOrderStats = async function(startDate, endDate, branchId) {
+orderSchema.statics.getOrderStats = async function(startDate, endDate) {
   const matchConditions = {
     createdAt: {
       $gte: startDate,
       $lte: endDate
     }
   };
-  
-  if (branchId) {
-    matchConditions.branchId = mongoose.Types.ObjectId(branchId);
-  }
-  
+
   const stats = await this.aggregate([
     { $match: matchConditions },
     {
@@ -370,19 +366,31 @@ orderSchema.statics.getOrderStats = async function(startDate, endDate, branchId)
         },
         cancelledOrders: {
           $sum: { $cond: [{ $eq: ['$status', 'cancelled'] }, 1, 0] }
-        }
+        },
+        uniqueCustomers: { $addToSet: '$userId' } // Collect unique user IDs
+      }
+    },
+    {
+      $project: {
+        _id: 0,
+        totalOrders: 1,
+        totalRevenue: 1,
+        averageOrderValue: 1,
+        completedOrders: 1,
+        cancelledOrders: 1,
+        uniqueCustomers: { $size: '$uniqueCustomers' } // Count unique user IDs
       }
     }
   ]);
-  
+
   return stats[0] || {
     totalOrders: 0,
     totalRevenue: 0,
     averageOrderValue: 0,
     completedOrders: 0,
-    cancelledOrders: 0
-  };
-};
+    cancelledOrders: 0,
+    uniqueCustomers: 0
+  }}
 
 // Static method to get popular items
 orderSchema.statics.getPopularItems = async function(limit = 10, startDate, endDate) {

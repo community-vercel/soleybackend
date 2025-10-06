@@ -9,14 +9,51 @@ const router = express.Router();
 // @desc    Get all food items
 // @route   GET /api/v1/food-items
 // @access  Public
+
+
 router.get('/', [
+  query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
+  query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
+  query('search').optional().trim().isLength({ min: 2 }).withMessage('Search query must be at least 2 characters'),
+  // Other query validations
+], asyncHandler(async (req, res) => {
+  const { page = 1, limit = 20, search } = req.query;
+  const skip = (page - 1) * limit;
+
+  let query = { isActive: true };
+  if (search) {
+    query.$text = { $search: search };
+  }
+
+  const items = await FoodItem.find(query)
+    .populate('category', 'name icon')
+    .sort(sortOptions)
+    .limit(parseInt(limit))
+    .skip(skip)
+    .select('-reviews');
+
+  const totalItems = await FoodItem.countDocuments(query);
+  const totalPages = Math.ceil(totalItems / limit);
+
+  res.json({
+    success: true,
+    count: items.length,
+    totalItems,
+    totalPages,
+    currentPage: parseInt(page),
+    items
+  });
+}));
+
+
+
+router.get('/getallitems', [
   query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
   query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
   query('category').optional().isMongoId().withMessage('Category must be a valid ID'),
   query('featured').optional().isBoolean().withMessage('Featured must be boolean'),
   query('popular').optional().isBoolean().withMessage('Popular must be boolean'),
   query('veg').optional().isBoolean().withMessage('Veg must be boolean'),
-  query('search').optional().trim().isLength({ min: 2 }).withMessage('Search query must be at least 2 characters'),
   query('priceMin').optional().isFloat({ min: 0 }).withMessage('Price min must be non-negative'),
   query('priceMax').optional().isFloat({ min: 0 }).withMessage('Price max must be non-negative'),
   query('rating').optional().isFloat({ min: 0, max: 5 }).withMessage('Rating must be between 0 and 5'),
@@ -115,7 +152,6 @@ router.get('/', [
     items
   });
 }));
-
 // @desc    Get featured food items
 // @route   GET /api/v1/food-items/featured
 // @access  Public

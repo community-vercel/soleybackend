@@ -171,12 +171,13 @@ router.get('/getall', [
   const orders = await Order.find()
     .populate([
       { path: 'items.foodItem', select: 'name imageUrl price' },
-      { path: 'branchId', select: 'name address phone' }
+      { path: 'branchId', select: 'name address phone' },
+{ path: 'userId', select: 'firstName lastName phone email', options: { virtuals: true } }
+
     ])
     .sort({ createdAt: -1 })
     .limit(parseInt(limit))
     .skip(skip);
-  
 
   const totalOrders = await Order.countDocuments(query);
   const totalPages = Math.ceil(totalOrders / limit);
@@ -187,7 +188,30 @@ router.get('/getall', [
     totalOrders,
     totalPages,
     currentPage: parseInt(page),
-    orders
+  orders:orders
+  });
+}));
+
+router.get('/stats', [
+  auth,
+  authorize('admin', 'manager'),
+
+], asyncHandler(async (req, res) => {
+
+  const {
+    startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), // 30 days ago
+    endDate = new Date(),
+    
+  } = req.query;
+
+  const stats = await Order.getOrderStats(
+    new Date(startDate),
+    new Date(endDate),
+  );
+
+  res.json({
+    success: true,
+    stats
   });
 }));
 // @desc    Get user orders
@@ -475,38 +499,6 @@ router.post('/:id/rating', [
 // @desc    Get order statistics (Admin/Manager only)
 // @route   GET /api/v1/orders/stats
 // @access  Private (Admin/Manager only)
-router.get('/stats', [
-  auth,
-  authorize('admin', 'manager'),
-  query('startDate').optional().isISO8601().withMessage('Invalid start date'),
-  query('endDate').optional().isISO8601().withMessage('Invalid end date'),
-  query('branchId').optional().isMongoId().withMessage('Invalid branch ID')
-], asyncHandler(async (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({
-      success: false,
-      message: 'Validation failed',
-      errors: errors.array()
-    });
-  }
 
-  const {
-    startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), // 30 days ago
-    endDate = new Date(),
-    branchId
-  } = req.query;
-
-  const stats = await Order.getOrderStats(
-    new Date(startDate),
-    new Date(endDate),
-    branchId
-  );
-
-  res.json({
-    success: true,
-    stats
-  });
-}));
 
 module.exports = router;

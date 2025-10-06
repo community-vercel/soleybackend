@@ -10,28 +10,100 @@ const router = express.Router();
 // @route   GET /api/v1/food-items
 // @access  Public
 
-
 router.get('/', [
   query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
   query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
+  query('category').optional().isMongoId().withMessage('Category must be a valid ID'),
+  query('featured').optional().isBoolean().withMessage('Featured must be boolean'),
+  query('popular').optional().isBoolean().withMessage('Popular must be boolean'),
+  query('veg').optional().isBoolean().withMessage('Veg must be boolean'),
   query('search').optional().trim().isLength({ min: 2 }).withMessage('Search query must be at least 2 characters'),
-  // Other query validations
+  query('priceMin').optional().isFloat({ min: 0 }).withMessage('Price min must be non-negative'),
+  query('priceMax').optional().isFloat({ min: 0 }).withMessage('Price max must be non-negative'),
+  query('rating').optional().isFloat({ min: 0, max: 5 }).withMessage('Rating must be between 0 and 5'),
+  query('sortBy').optional().isIn(['relevance', 'price-low', 'price-high', 'rating', 'popular', 'newest']).withMessage('Invalid sort option')
 ], asyncHandler(async (req, res) => {
-  const { page = 1, limit = 20, search } = req.query;
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      success: false,
+      message: 'Validation failed',
+      errors: errors.array()
+    });
+  }
+
+  const {
+    page = 1,
+    limit = 20,
+    category,
+    featured,
+    popular,
+    veg,
+    search,
+    priceMin,
+    priceMax,
+    rating,
+    sortBy = 'relevance'
+  } = req.query;
+
   const skip = (page - 1) * limit;
 
   let query = { isActive: true };
+
+  // Apply filters
+  if (category) query.category = category;
+  if (featured !== undefined) query.isFeatured = featured === 'true';
+  if (popular !== undefined) query.isPopular = popular === 'true';
+  if (veg !== undefined) query.isVeg = veg === 'true';
+  if (rating) query['rating.average'] = { $gte: parseFloat(rating) };
+
+  // Price range filter
+  if (priceMin !== undefined || priceMax !== undefined) {
+    query.price = {};
+    if (priceMin !== undefined) query.price.$gte = parseFloat(priceMin);
+    if (priceMax !== undefined) query.price.$lte = parseFloat(priceMax);
+  }
+
+  // Search functionality
   if (search) {
     query.$text = { $search: search };
   }
 
+  // Build sort options
+  let sortOptions = {};
+  switch (sortBy) {
+    case 'price-low':
+      sortOptions = { price: 1 };
+      break;
+    case 'price-high':
+      sortOptions = { price: -1 };
+      break;
+    case 'rating':
+      sortOptions = { 'rating.average': -1, 'rating.count': -1 };
+      break;
+    case 'popular':
+      sortOptions = { totalSold: -1 };
+      break;
+    case 'newest':
+      sortOptions = { createdAt: -1 };
+      break;
+    default: // relevance
+      if (search) {
+        sortOptions = { score: { $meta: 'textScore' } };
+      } else {
+        sortOptions = { 'rating.average': -1 };
+      }
+  }
+
+  // Execute query
   const items = await FoodItem.find(query)
     .populate('category', 'name icon')
     .sort(sortOptions)
     .limit(parseInt(limit))
     .skip(skip)
-    .select('-reviews');
+    .select('-reviews'); // Exclude reviews for performance
 
+  // Get total count for pagination
   const totalItems = await FoodItem.countDocuments(query);
   const totalPages = Math.ceil(totalItems / limit);
 

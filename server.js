@@ -19,7 +19,7 @@ const orderRoutes = require('./routes/orderRoutes');
 const setting = require('./routes/settings');
 const offers = require('./routes/offer');
 const bannerRoutes = require('./routes/bannerRoutes');
-
+const contactRoutes=require('./routes/contact');
 // Import middleware
 const errorHandler = require('./middleware/errorHandler');
 const notFound = require('./middleware/not-found');
@@ -107,6 +107,8 @@ app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/categories', categoryRoutes);
 app.use('/api/v1/food-items', foodItemRoutes);
 app.use('/api/v1/orders', orderRoutes);
+app.use('/api/v1/contact', contactRoutes);
+
 // app.use('/api/v1/branches', branchRoutes);
 app.use('/api/v1/banners', bannerRoutes);
 

@@ -60,7 +60,7 @@ exports.saveAddress = async (req, res) => {
 
     // Create new address
     const newAddress = new Address({
-      userId: req.user._id,
+      userId: req.user._id || req.user.userId || req.user.id,
       type: type || 'home',
       address,
       apartment,

@@ -9,7 +9,7 @@ const MAX_DELIVERY_DISTANCE = 6; // km
 // Get all saved addresses for user
 exports.getSavedAddresses = async (req, res) => {
   try {
-    const addresses = await Address.find({ userId: req.user._id })
+    const addresses = await Address.find({ userId: req.user._id || req.user.userId || req.user.id })
       .sort({ isDefault: -1, createdAt: -1 });
 
     res.json({

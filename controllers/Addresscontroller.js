@@ -89,7 +89,31 @@ exports.saveAddress = async (req, res) => {
 };
 
 
+exports.getPlaceDetails = async (req, res) => {
+  try {
+    const placeId = req.query.place_id;
+    if (!placeId) {
+      return res.status(400).json({ error: 'Missing place_id parameter' });
+    }
 
+    const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${encodeURIComponent(
+      placeId
+    )}&key=${process.env.GOOGLE_API_KEY}&fields=geometry`;
+
+    const response = await fetch(url);
+    const data = await response.json();
+    console.log('Google Place Details response:', data); // Log to verify
+
+    if (data.status !== 'OK') {
+      return res.status(400).json({ error: data.error_message || 'Failed to fetch place details' });
+    }
+
+    res.json(data); // Send the Google API response
+  } catch (error) {
+    console.error('Error fetching place details:', error);
+    res.status(500).json({ error: 'Failed to fetch place details' });
+  }
+};
 exports.getAddressAutocomplete = async (req, res) => {
   try {
     const input = req.query.input;

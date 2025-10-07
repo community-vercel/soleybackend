@@ -1,6 +1,6 @@
 const Address = require('../models/Address');
 const { validateCoordinates, calculateDistance } = require('../utils/locationUtils');
-
+const fetch = require('node-fetch'); // Ensure node-fetch is installed
 // Shop coordinates
 const SHOP_LAT = 41.3995;
 const SHOP_LNG = 2.1909;
@@ -87,6 +87,33 @@ exports.saveAddress = async (req, res) => {
     });
   }
 };
+
+
+
+exports.getAddressAutocomplete = async (req, res) => {
+  try {
+    const input = req.query.input;
+
+    if (!input) {
+      return res.status(400).json({ error: 'Missing input parameter' });
+    }
+
+    const url = `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(
+      input
+    )}&key=${process.env.GOOGLE_API_KEY}&language=en&components=country:es`;
+
+    const response = await fetch(url);
+    const data = await response.json();
+
+    // Forward Google response to frontend
+    res.json(data);
+  } catch (error) {
+    console.error('Error fetching Google API:', error);
+    res.status(500).json({ error: 'Failed to fetch autocomplete data' });
+  }
+};
+
+// ... other controller methods (getSavedAddresses, saveAddress, etc.)
 
 // Update existing address
 exports.updateAddress = async (req, res) => {

@@ -15,7 +15,7 @@ const userRoutes = require('./routes/userRoutes');
 const categoryRoutes = require('./routes/categoryRoutes');
 const foodItemRoutes = require('./routes/fooditems');
 const orderRoutes = require('./routes/orderRoutes');
-// const branchRoutes = require('./routes/branches');
+const addressesRoutes = require('./routes/addressRoutes');
 const setting = require('./routes/settings');
 const offers = require('./routes/offer');
 const bannerRoutes = require('./routes/bannerRoutes');
@@ -109,7 +109,7 @@ app.use('/api/v1/food-items', foodItemRoutes);
 app.use('/api/v1/orders', orderRoutes);
 app.use('/api/v1/contact', contactRoutes);
 
-// app.use('/api/v1/branches', branchRoutes);
+app.use('/api/v1/addresses', addressesRoutes);
 app.use('/api/v1/banners', bannerRoutes);
 
 app.use('/api/v1/settings', setting);

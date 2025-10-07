@@ -10,14 +10,16 @@ const router = express.Router();
 // @desc    Create new order
 // @route   POST /api/v1/orders
 // @access  Private
+// Update your POST /api/v1/orders route
 router.post('/', [
   auth,
-   body('items').isArray({ min: 1 }).withMessage('Order must contain at least one item'),
-body('items.*.foodItem.id').isMongoId().withMessage('Invalid food item ID'),
+  body('items').isArray({ min: 1 }).withMessage('Order must contain at least one item'),
+  body('items.*.foodItem.id').isMongoId().withMessage('Invalid food item ID'),
   body('items.*.quantity').isInt({ min: 1 }).withMessage('Quantity must be at least 1'),
   body('deliveryType').isIn(['delivery', 'pickup']).withMessage('Invalid delivery type'),
   body('paymentMethod').isIn(['cash-on-delivery','cashOnDelivery', 'card', 'paypal', 'stripe']).withMessage('Invalid payment method'),
-body('branchId').isMongoId().withMessage('Invalid branch ID')
+  body('branchId').isMongoId().withMessage('Invalid branch ID'),
+  body('deliveryFee').optional().isFloat({ min: 0 }).withMessage('Delivery fee must be a positive number'),
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -35,10 +37,13 @@ body('branchId').isMongoId().withMessage('Invalid branch ID')
     branchId,
     deliveryAddress,
     specialInstructions,
-    couponCode
+    couponCode,
+    deliveryFee: clientDeliveryFee, // Get from client
+    subtotal: clientSubtotal, // Get from client
+    tax: clientTax, // Get from client
+    total: clientTotal // Get from client
   } = req.body;
 
-  
   // Validate delivery address for delivery orders
   if (deliveryType === 'delivery' && !deliveryAddress) {
     return res.status(400).json({
@@ -48,77 +53,91 @@ body('branchId').isMongoId().withMessage('Invalid branch ID')
   }
 
   // Process cart items and calculate totals
- let processedItems = [];
+  let processedItems = [];
   let subtotal = 0;
 
-for (const item of items) {
-  const foodItemId = item.foodItem?.id || item.foodItem; // <-- get the ID
-  const foodItem = await FoodItem.findById(foodItemId);
+  for (const item of items) {
+    const foodItemId = item.foodItem?.id || item.foodItem;
+    const foodItem = await FoodItem.findById(foodItemId);
 
-  if (!foodItem || !foodItem.isActive) {
-    return res.status(400).json({
-      success: false,
-      message: `Food item ${foodItemId} is not available`
+    if (!foodItem || !foodItem.isActive) {
+      return res.status(400).json({
+        success: false,
+        message: `Food item ${foodItemId} is not available`
+      });
+    }
+
+    let unitPrice = foodItem.price;
+
+    if (item.selectedMealSize) {
+      unitPrice += item.selectedMealSize.additionalPrice || 0;
+    }
+    
+    if (item.selectedExtras) {
+      unitPrice += item.selectedExtras.reduce((sum, extra) => sum + (extra.price || 0), 0);
+    }
+    
+    if (item.selectedAddons) {
+      unitPrice += item.selectedAddons.reduce((sum, addon) => sum + (addon.price || 0), 0);
+    }
+
+    const totalPrice = unitPrice * item.quantity;
+
+    processedItems.push({
+      foodItem: foodItem._id,
+      quantity: item.quantity,
+      selectedMealSize: item.selectedMealSize,
+      selectedExtras: item.selectedExtras || [],
+      selectedAddons: item.selectedAddons || [],
+      specialInstructions: item.specialInstructions,
+      unitPrice,
+      totalPrice
     });
+
+    subtotal += totalPrice;
+
+    await foodItem.updateStock(item.quantity, "subtract");
   }
 
-  let unitPrice = foodItem.price;
-
-  if (item.selectedMealSize) {
-    unitPrice += item.selectedMealSize.additionalPrice || 0;
-  }
+  // CRITICAL: Use delivery fee from client (already calculated on frontend)
+  // The frontend has already calculated the delivery fee based on distance and order total
+  const deliveryFee = clientDeliveryFee !== undefined ? clientDeliveryFee : 0.0;
   
-  if (item.selectedExtras) {
-    unitPrice += item.selectedExtras.reduce((sum, extra) => sum + (extra.price || 0), 0);
-  }
-  
-  if (item.selectedAddons) {
-    unitPrice += item.selectedAddons.reduce((sum, addon) => sum + (addon.price || 0), 0);
-  }
+  console.log('Order delivery details:');
+  console.log('  - Type:', deliveryType);
+  console.log('  - Delivery Fee:', deliveryFee);
+  console.log('  - Subtotal:', subtotal);
+  console.log('  - Client Delivery Fee:', clientDeliveryFee);
 
-  const totalPrice = unitPrice * item.quantity;
-
-  processedItems.push({
-    foodItem: foodItem._id, // <-- store ID only
-    quantity: item.quantity,
-    selectedMealSize: item.selectedMealSize,
-    selectedExtras: item.selectedExtras || [],
-    selectedAddons: item.selectedAddons || [],
-    specialInstructions: item.specialInstructions,
-    unitPrice,
-    totalPrice
-  });
-
-  subtotal += totalPrice;
-
-  await foodItem.updateStock(item.quantity, "subtract");
-}
-
-
-  // Calculate delivery fee and tax
-  const deliveryFee = deliveryType === 'delivery' ? 0.0 : 0;
-  const taxRate = 0.00; // 8% tax
+  // Calculate tax and discount
+  const taxRate = 0.00; // No tax
   const tax = subtotal * taxRate;
   
-  // Apply discount/coupon (simplified)
   let discount = 0;
   if (couponCode) {
-    // In a real app, you'd validate the coupon code
     discount = subtotal * 0.1; // 10% discount example
   }
 
   const total = subtotal + deliveryFee + tax - discount;
 
+  // Validate that totals match (with small tolerance for floating point)
+  if (clientTotal !== undefined && Math.abs(total - clientTotal) > 0.01) {
+    console.warn('Total mismatch:', {
+      calculated: total,
+      client: clientTotal,
+      difference: Math.abs(total - clientTotal)
+    });
+  }
+
   // Create order
-  const orderNumber = "ORD" + Date.now(); // Simple unique order number
+  const orderNumber = "ORD" + Date.now();
 
   const order = await Order.create({
-
-orderNumber,
+    orderNumber,
     userId: req.user.id,
     items: processedItems,
     subtotal,
-    deliveryFee,
+    deliveryFee, // Use the delivery fee from client
     tax,
     discount,
     couponCode,
@@ -143,7 +162,6 @@ orderNumber,
     order
   });
 }));
-
 
 router.get('/getall', [
   auth,

@@ -42,7 +42,7 @@ const cartItemSchema = new mongoose.Schema({
 const deliveryAddressSchema = new mongoose.Schema({
   type: {
     type: String,
-    enum:["home", "office", "pickup", "other"],
+    enum:["home","Home", "office", "Office", "pickup", "other"],
     default: 'pickup'
   },
   

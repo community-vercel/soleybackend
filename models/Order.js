@@ -102,6 +102,7 @@ const orderSchema = new mongoose.Schema({
       'preparing',
       'ready',
       'pickup',
+      'shop',
       'out-for-delivery',
       'delivered',
       'cancelled',
@@ -111,7 +112,7 @@ const orderSchema = new mongoose.Schema({
   },
   paymentMethod: {
     type: String,
-    enum: ['cash-on-delivery','cashOnDelivery', 'card', 'paypal', 'stripe', 'wallet'],
+    enum: ['cash-on-delivery','cashOnDelivery', 'card','shop', 'paypal', 'stripe', 'wallet'],
     required: true
   },
   paymentStatus: {

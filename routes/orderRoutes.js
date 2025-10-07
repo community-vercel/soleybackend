@@ -17,7 +17,7 @@ router.post('/', [
   body('items.*.foodItem.id').isMongoId().withMessage('Invalid food item ID'),
   body('items.*.quantity').isInt({ min: 1 }).withMessage('Quantity must be at least 1'),
   body('deliveryType').isIn(['delivery', 'pickup']).withMessage('Invalid delivery type'),
-  body('paymentMethod').isIn(['cash-on-delivery','cashOnDelivery', 'card', 'paypal', 'stripe']).withMessage('Invalid payment method'),
+  body('paymentMethod').isIn(['cash-on-delivery','cashOnDelivery', 'card','shop', 'paypal', 'stripe']).withMessage('Invalid payment method'),
   body('branchId').isMongoId().withMessage('Invalid branch ID'),
   body('deliveryFee').optional().isFloat({ min: 0 }).withMessage('Delivery fee must be a positive number'),
 ], asyncHandler(async (req, res) => {

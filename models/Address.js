@@ -9,7 +9,7 @@ const addressSchema = new mongoose.Schema({
   },
   type: {
     type: String,
-    enum: ['home', 'office', 'other'],
+    enum: ['home','Home','office', 'Office','other'],
     default: 'home'
   },
   address: {

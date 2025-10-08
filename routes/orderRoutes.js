@@ -11,6 +11,7 @@ const router = express.Router();
 // @route   POST /api/v1/orders
 // @access  Private
 // Update your POST /api/v1/orders route
+// Update your POST /api/v1/orders route validation
 router.post('/', [
   auth,
   body('items').isArray({ min: 1 }).withMessage('Order must contain at least one item'),
@@ -18,6 +19,7 @@ router.post('/', [
   body('items.*.quantity').isInt({ min: 1 }).withMessage('Quantity must be at least 1'),
   body('deliveryType').isIn(['delivery', 'pickup']).withMessage('Invalid delivery type'),
   body('paymentMethod').isIn(['cash-on-delivery','cashOnDelivery', 'card','shop', 'paypal', 'stripe']).withMessage('Invalid payment method'),
+  body('codPaymentType').optional().isIn(['cash', 'card']).withMessage('Invalid COD payment type'),
   body('branchId').isMongoId().withMessage('Invalid branch ID'),
   body('deliveryFee').optional().isFloat({ min: 0 }).withMessage('Delivery fee must be a positive number'),
 ], asyncHandler(async (req, res) => {
@@ -34,15 +36,24 @@ router.post('/', [
     items,
     deliveryType,
     paymentMethod,
+    codPaymentType, // NEW: Get COD payment type
     branchId,
     deliveryAddress,
     specialInstructions,
     couponCode,
-    deliveryFee: clientDeliveryFee, // Get from client
-    subtotal: clientSubtotal, // Get from client
-    tax: clientTax, // Get from client
-    total: clientTotal // Get from client
+    deliveryFee: clientDeliveryFee,
+    subtotal: clientSubtotal,
+    tax: clientTax,
+    total: clientTotal
   } = req.body;
+
+  // Validate COD payment type for cash-on-delivery orders
+  if ((paymentMethod === 'cashOnDelivery' || paymentMethod === 'cash-on-delivery') && !codPaymentType) {
+    return res.status(400).json({
+      success: false,
+      message: 'COD payment type (cash or card) is required for cash on delivery orders'
+    });
+  }
 
   // Validate delivery address for delivery orders
   if (deliveryType === 'delivery' && !deliveryAddress) {
@@ -99,28 +110,25 @@ router.post('/', [
     await foodItem.updateStock(item.quantity, "subtract");
   }
 
-  // CRITICAL: Use delivery fee from client (already calculated on frontend)
-  // The frontend has already calculated the delivery fee based on distance and order total
   const deliveryFee = clientDeliveryFee !== undefined ? clientDeliveryFee : 0.0;
   
   console.log('Order delivery details:');
   console.log('  - Type:', deliveryType);
+  console.log('  - Payment Method:', paymentMethod);
+  console.log('  - COD Payment Type:', codPaymentType); // NEW: Log COD payment type
   console.log('  - Delivery Fee:', deliveryFee);
   console.log('  - Subtotal:', subtotal);
-  console.log('  - Client Delivery Fee:', clientDeliveryFee);
 
-  // Calculate tax and discount
-  const taxRate = 0.00; // No tax
+  const taxRate = 0.00;
   const tax = subtotal * taxRate;
   
   let discount = 0;
   if (couponCode) {
-    discount = subtotal * 0.1; // 10% discount example
+    discount = subtotal * 0.1;
   }
 
   const total = subtotal + deliveryFee + tax - discount;
 
-  // Validate that totals match (with small tolerance for floating point)
   if (clientTotal !== undefined && Math.abs(total - clientTotal) > 0.01) {
     console.warn('Total mismatch:', {
       calculated: total,
@@ -129,15 +137,15 @@ router.post('/', [
     });
   }
 
-  // Create order
   const orderNumber = "ORD" + Date.now();
 
-  const order = await Order.create({
+  // Create order with COD payment type
+  const orderData = {
     orderNumber,
     userId: req.user.id,
     items: processedItems,
     subtotal,
-    deliveryFee, // Use the delivery fee from client
+    deliveryFee,
     tax,
     discount,
     couponCode,
@@ -147,7 +155,14 @@ router.post('/', [
     deliveryAddress,
     branchId,
     specialInstructions
-  });
+  };
+
+  // Add COD payment type if applicable
+  if (codPaymentType) {
+    orderData.codPaymentType = codPaymentType;
+  }
+
+  const order = await Order.create(orderData);
 
   // Populate order details
   await order.populate([
@@ -162,6 +177,8 @@ router.post('/', [
     order
   });
 }));
+
+
 
 router.get('/getall', [
   auth,

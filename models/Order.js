@@ -115,11 +115,20 @@ const orderSchema = new mongoose.Schema({
     enum: ['cash-on-delivery','cashOnDelivery', 'card','shop', 'paypal', 'stripe', 'wallet'],
     required: true
   },
+  
   paymentStatus: {
     type: String,
     enum: ['pending', 'paid', 'failed', 'refunded', 'partially-refunded'],
     default: 'pending'
   },
+  // Add this to your Order schema
+codPaymentType: {
+  type: String,
+  enum: ['cash', 'card'],
+  required: function() {
+    return this.paymentMethod === 'cashOnDelivery' || this.paymentMethod === 'cash-on-delivery';
+  }
+},
   paymentDetails: {
     transactionId: String,
     paymentGateway: String,

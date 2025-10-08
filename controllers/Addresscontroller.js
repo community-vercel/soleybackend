@@ -1,9 +1,10 @@
 const Address = require('../models/Address');
 const { validateCoordinates, calculateDistance } = require('../utils/locationUtils');
-const fetch = require('node-fetch'); // Ensure node-fetch is installed
+const fetch = require('node-fetch');
+
 // Shop coordinates
-const SHOP_LAT = 41.3995;
-const SHOP_LNG = 2.1909;
+const SHOP_LAT =41.403661;
+const SHOP_LNG = 2.198579;
 const MAX_DELIVERY_DISTANCE = 6; // km
 
 // Get all saved addresses for user
@@ -32,10 +33,24 @@ exports.saveAddress = async (req, res) => {
     const { type, address, apartment, instructions, latitude, longitude, isDefault } = req.body;
 
     // Validate required fields
-    if (!address || !latitude || !longitude) {
+    if (!address) {
       return res.status(400).json({
         success: false,
-        message: 'Address, latitude, and longitude are required'
+        message: 'Address is required'
+      });
+    }
+
+    if (!apartment) {
+      return res.status(400).json({
+        success: false,
+        message: 'Apartment/House number is required'
+      });
+    }
+
+    if (!latitude || !longitude) {
+      return res.status(400).json({
+        success: false,
+        message: 'Location coordinates are required'
       });
     }
 
@@ -58,13 +73,16 @@ exports.saveAddress = async (req, res) => {
       });
     }
 
+    // Normalize type to match enum values
+    const normalizedType = type ? type.charAt(0).toUpperCase() + type.slice(1).toLowerCase() : 'Home';
+
     // Create new address
     const newAddress = new Address({
       userId: req.user._id || req.user.userId || req.user.id,
-      type: type || 'home',
-      address,
-      apartment,
-      instructions,
+      type: normalizedType,
+      address: address.trim(),
+      apartment: apartment.trim(),
+      instructions: instructions ? instructions.trim() : undefined,
       latitude,
       longitude,
       isDefault: isDefault || false
@@ -80,6 +98,16 @@ exports.saveAddress = async (req, res) => {
     });
   } catch (error) {
     console.error('Save address error:', error);
+    
+    // Handle validation errors
+    if (error.name === 'ValidationError') {
+      const messages = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({
+        success: false,
+        message: messages.join(', ')
+      });
+    }
+
     res.status(500).json({
       success: false,
       message: 'Failed to save address',
@@ -88,7 +116,7 @@ exports.saveAddress = async (req, res) => {
   }
 };
 
-
+// Get place details from Google API
 exports.getPlaceDetails = async (req, res) => {
   try {
     const placeId = req.query.place_id;
@@ -102,18 +130,20 @@ exports.getPlaceDetails = async (req, res) => {
 
     const response = await fetch(url);
     const data = await response.json();
-    console.log('Google Place Details response:', data); // Log to verify
+    console.log('Google Place Details response:', data);
 
     if (data.status !== 'OK') {
       return res.status(400).json({ error: data.error_message || 'Failed to fetch place details' });
     }
 
-    res.json(data); // Send the Google API response
+    res.json(data);
   } catch (error) {
     console.error('Error fetching place details:', error);
     res.status(500).json({ error: 'Failed to fetch place details' });
   }
 };
+
+// Get address autocomplete from Google API
 exports.getAddressAutocomplete = async (req, res) => {
   try {
     const input = req.query.input;
@@ -129,15 +159,12 @@ exports.getAddressAutocomplete = async (req, res) => {
     const response = await fetch(url);
     const data = await response.json();
 
-    // Forward Google response to frontend
     res.json(data);
   } catch (error) {
     console.error('Error fetching Google API:', error);
     res.status(500).json({ error: 'Failed to fetch autocomplete data' });
   }
 };
-
-// ... other controller methods (getSavedAddresses, saveAddress, etc.)
 
 // Update existing address
 exports.updateAddress = async (req, res) => {
@@ -155,6 +182,14 @@ exports.updateAddress = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: 'Address not found'
+      });
+    }
+
+    // Validate apartment if provided
+    if (apartment !== undefined && !apartment.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Apartment/House number cannot be empty'
       });
     }
 
@@ -179,10 +214,13 @@ exports.updateAddress = async (req, res) => {
     }
 
     // Update fields
-    if (type) existingAddress.type = type;
-    if (address) existingAddress.address = address;
-    if (apartment !== undefined) existingAddress.apartment = apartment;
-    if (instructions !== undefined) existingAddress.instructions = instructions;
+    if (type) {
+      const normalizedType = type.charAt(0).toUpperCase() + type.slice(1).toLowerCase();
+      existingAddress.type = normalizedType;
+    }
+    if (address) existingAddress.address = address.trim();
+    if (apartment !== undefined) existingAddress.apartment = apartment.trim();
+    if (instructions !== undefined) existingAddress.instructions = instructions.trim();
     if (latitude) existingAddress.latitude = latitude;
     if (longitude) existingAddress.longitude = longitude;
     if (isDefault !== undefined) existingAddress.isDefault = isDefault;
@@ -196,6 +234,15 @@ exports.updateAddress = async (req, res) => {
     });
   } catch (error) {
     console.error('Update address error:', error);
+    
+    if (error.name === 'ValidationError') {
+      const messages = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({
+        success: false,
+        message: messages.join(', ')
+      });
+    }
+
     res.status(500).json({
       success: false,
       message: 'Failed to update address',
@@ -318,4 +365,3 @@ exports.validateAddress = async (req, res) => {
     });
   }
 };
-

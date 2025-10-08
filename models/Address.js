@@ -9,8 +9,8 @@ const addressSchema = new mongoose.Schema({
   },
   type: {
     type: String,
-    enum: ['home','Home','office', 'Office','other'],
-    default: 'home'
+    enum: ['Home', 'Office', 'Other'],
+    default: 'Home'
   },
   address: {
     type: String,
@@ -19,6 +19,7 @@ const addressSchema = new mongoose.Schema({
   },
   apartment: {
     type: String,
+    required: [true, 'Apartment/House number is required'],
     trim: true
   },
   instructions: {

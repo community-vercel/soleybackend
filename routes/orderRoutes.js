@@ -414,8 +414,10 @@ router.patch('/:id/status', [
     order.actualDeliveryTime = new Date();
     await order.save();
   }
+      const orderUserId = order.userId._id ? order.userId._id.toString() : order.userId.toString();
+
   await sendOrderStatusNotification(
-    order.userId,
+  orderUserId,
     order,
     status,
     message ? { title: '📦 Order Update', body: message } : null

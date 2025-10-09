@@ -171,8 +171,10 @@ router.post('/', [
     { path: 'items.foodItem', select: 'name imageUrl price' },
     { path: 'branchId', select: 'name address phone' }
   ]);
+    const orderUserId = order.userId._id ? order.userId._id.toString() : order.userId.toString();
+
    await sendOrderStatusNotification(
-    order.userId,
+    orderUserId,
     order,
     'pending'
   );

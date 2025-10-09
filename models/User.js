@@ -78,6 +78,22 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+    fcmToken: {
+    type: String,
+    default: null
+  },
+  fcmTokens: [{
+    token: String,
+    deviceId: String,
+    platform: {
+      type: String,
+      enum: ['android', 'ios', 'web']
+    },
+    createdAt: {
+      type: Date,
+      default: Date.now
+    }
+  }],
   preferences: {
     notifications: {
       email: { type: Boolean, default: true },
@@ -258,6 +274,37 @@ userSchema.methods.deleteAddress = function(addressId) {
 // Get default address
 userSchema.methods.getDefaultAddress = function() {
   return this.addresses.find(addr => addr.isDefault) || this.addresses[0] || null;
+};
+userSchema.methods.updateFCMToken = async function(token, deviceId, platform) {
+  // Remove old token for this device
+  this.fcmTokens = this.fcmTokens.filter(t => t.deviceId !== deviceId);
+  
+  // Add new token
+  this.fcmTokens.push({
+    token,
+    deviceId,
+    platform,
+    createdAt: new Date()
+  });
+  
+  // Set primary token
+  this.fcmToken = token;
+  
+  return this.save({ validateBeforeSave: false });
+};
+
+// Add method to remove FCM token
+userSchema.methods.removeFCMToken = async function(deviceId) {
+  this.fcmTokens = this.fcmTokens.filter(t => t.deviceId !== deviceId);
+  
+  // Update primary token
+  if (this.fcmTokens.length > 0) {
+    this.fcmToken = this.fcmTokens[0].token;
+  } else {
+    this.fcmToken = null;
+  }
+  
+  return this.save({ validateBeforeSave: false });
 };
 
 module.exports = mongoose.model('User', userSchema);

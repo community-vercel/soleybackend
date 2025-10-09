@@ -6,6 +6,7 @@ const User = require('../models/User');
 const { auth } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const { sendOTPEmail, sendPasswordResetOTPEmail } = require('../utils/emailService');
+  const { sendNotificationToDevice } = require('../utils/firebaseAdmin');
 
 const router = express.Router();
 
@@ -733,4 +734,113 @@ router.post('/resend-reset-otp', [
   }
 }));
 
+// Add these routes to your auth.js routes file
+
+// @desc    Update FCM token
+// @route   POST /api/v1/auth/fcm-token
+// @access  Private
+router.post('/fcm-token', [
+  auth,
+  body('fcmToken')
+    .notEmpty()
+    .withMessage('FCM token is required'),
+  body('deviceId')
+    .optional()
+    .trim(),
+  body('platform')
+    .optional()
+    .isIn(['android', 'ios', 'web'])
+], asyncHandler(async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      success: false,
+      message: 'Validation failed',
+      errors: errors.array()
+    });
+  }
+
+  const { fcmToken, deviceId, platform } = req.body;
+
+  const user = await User.findById(req.user.id);
+
+  if (!user) {
+    return res.status(404).json({
+      success: false,
+      message: 'User not found'
+    });
+  }
+
+  await user.updateFCMToken(
+    fcmToken, 
+    deviceId || 'default', 
+    platform || 'android'
+  );
+
+  res.json({
+    success: true,
+    message: 'FCM token updated successfully'
+  });
+}));
+
+// @desc    Remove FCM token
+// @route   DELETE /api/v1/auth/fcm-token
+// @access  Private
+router.delete('/fcm-token', [
+  auth,
+  body('deviceId')
+    .optional()
+    .trim()
+], asyncHandler(async (req, res) => {
+  const { deviceId } = req.body;
+
+  const user = await User.findById(req.user.id);
+
+  if (!user) {
+    return res.status(404).json({
+      success: false,
+      message: 'User not found'
+    });
+  }
+
+  await user.removeFCMToken(deviceId || 'default');
+
+  res.json({
+    success: true,
+    message: 'FCM token removed successfully'
+  });
+}));
+
+// @desc    Test notification
+// @route   POST /api/v1/auth/test-notification
+// @access  Private
+router.post('/test-notification', [
+  auth
+], asyncHandler(async (req, res) => {
+  const user = await User.findById(req.user.id);
+
+  if (!user || !user.fcmToken) {
+    return res.status(400).json({
+      success: false,
+      message: 'No FCM token registered'
+    });
+  }
+
+  
+  const result = await sendNotificationToDevice(
+    user.fcmToken,
+    '🔔 Test Notification',
+    'This is a test notification from your app!',
+    {
+      type: 'test',
+      timestamp: new Date().toISOString()
+    }
+  );
+
+  res.json({
+    success: result.success,
+    message: result.success ? 'Test notification sent' : 'Failed to send notification',
+    details: result
+  });
+}));
 module.exports = router;

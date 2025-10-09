@@ -6,6 +6,7 @@ const { auth, authorize } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const Branch =require('../models/Branch');
 const router = express.Router();
+const { sendOrderStatusNotification, sendNewOrderNotification } = require('../utils/notificationService');
 
 // @desc    Create new order
 // @route   POST /api/v1/orders
@@ -170,6 +171,22 @@ router.post('/', [
     { path: 'items.foodItem', select: 'name imageUrl price' },
     { path: 'branchId', select: 'name address phone' }
   ]);
+   await sendOrderStatusNotification(
+    order.userId,
+    order,
+    'pending'
+  );
+
+  // Send notification to admin/restaurant staff
+  const adminUsers = await User.find({ 
+    role: { $in: ['admin', 'manager'] },
+    fcmToken: { $ne: null }
+  });
+  
+  const adminTokens = adminUsers.map(u => u.fcmToken);
+  if (adminTokens.length > 0) {
+    await sendNewOrderNotification(adminTokens, order);
+  }
 
   res.status(201).json({
     success: true,
@@ -392,6 +409,12 @@ router.patch('/:id/status', [
     order.actualDeliveryTime = new Date();
     await order.save();
   }
+  await sendOrderStatusNotification(
+    order.userId,
+    order,
+    status,
+    message ? { title: '📦 Order Update', body: message } : null
+  );
 
   res.json({
     success: true,

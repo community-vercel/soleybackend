@@ -72,8 +72,7 @@ const sendNotificationToMultipleDevices = async (fcmTokens, title, body, data = 
       }
     };
 
-    const response = await admin.messaging().sendEachForMulticast(message)
-;
+    const response = await admin.messaging().sendEachForMulticast(message);
     console.log(`Successfully sent ${response.successCount} notifications`);
     return { success: true, response };
   } catch (error) {

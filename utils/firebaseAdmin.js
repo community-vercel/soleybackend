@@ -1,6 +1,5 @@
 
 
-const serviceAccount = require('../config/firebase-service-account.json');
 const admin = require('../config/firebase'); // Adjust path to your Firebase initialization
 
 

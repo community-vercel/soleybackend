@@ -176,22 +176,71 @@ router.post('/', [
   ]);
     const orderUserId = order.userId._id ? order.userId._id.toString() : order.userId.toString();
 
-   await sendOrderStatusNotification(
-    orderUserId,
-    order,
-    'pending'
-  );
+ 
+  try {
+    // 1. Send notification to customer
+    if (order.userId?.fcmToken) {
+      await sendOrderStatusNotification(
+        orderUserId,
+        order,
+        'pending'
+      );
+      console.log('✅ Customer notification sent');
+    }
 
-  // Send notification to admin/restaurant staff
-  const adminUsers = await User.find({ 
-    role: { $in: ['admin', 'manager'] },
-    fcmToken: { $ne: null }
-  });
-  
-  const adminTokens = adminUsers.map(u => u.fcmToken);
-  if (adminTokens.length > 0) {
-    await sendNewOrderNotification(adminTokens, order);
+    // 2. Send notification to ALL admins and managers
+    const adminUsers = await User.find({ 
+      role: { $in: ['admin', 'manager', 'superadmin'] },
+      isActive: true,
+      fcmToken: { $exists: true, $ne: null }
+    }).select('firstName lastName email fcmToken fcmTokens');
+
+    if (adminUsers.length > 0) {
+      console.log(`📢 Sending notifications to ${adminUsers.length} admins/managers`);
+
+      // Collect all FCM tokens from admins (including multiple devices)
+      const adminTokens = [];
+      adminUsers.forEach(admin => {
+        // Add primary token
+        if (admin.fcmToken) {
+          adminTokens.push(admin.fcmToken);
+        }
+        // Add tokens from multiple devices
+        if (admin.fcmTokens && Array.isArray(admin.fcmTokens)) {
+          admin.fcmTokens.forEach(tokenObj => {
+            if (tokenObj.token && !adminTokens.includes(tokenObj.token)) {
+              adminTokens.push(tokenObj.token);
+            }
+          });
+        }
+      });
+
+      // Remove duplicates
+      const uniqueAdminTokens = [...new Set(adminTokens)];
+
+      console.log(`📱 Sending to ${uniqueAdminTokens.length} admin devices`);
+
+      if (uniqueAdminTokens.length > 0) {
+        const notificationResult = await sendNewOrderNotification(
+          uniqueAdminTokens, 
+          order
+        );
+
+        if (notificationResult.success) {
+          console.log('✅ Admin notifications sent successfully');
+        } else {
+          console.error('❌ Failed to send admin notifications:', notificationResult.error);
+        }
+      }
+    } else {
+      console.log('⚠️ No admin users found with FCM tokens');
+    }
+
+  } catch (notificationError) {
+    console.error('❌ Error sending notifications:', notificationError);
+    // Don't fail the order creation if notifications fail
   }
+
 
   res.status(201).json({
     success: true,

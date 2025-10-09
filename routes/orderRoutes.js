@@ -1,7 +1,10 @@
 const express = require('express');
 const { body, param, query, validationResult } = require('express-validator');
 const Order = require('../models/Order');
+
 const { FoodItem } = require('../models/Category');
+const User = require('../models/User');
+
 const { auth, authorize } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const Branch =require('../models/Branch');

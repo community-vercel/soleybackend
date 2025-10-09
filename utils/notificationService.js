@@ -1,4 +1,4 @@
-// utils/notificationService.js
+const User = require('../models/User'); // Your User model
 const {
   sendNotificationToDevice,
   sendNotificationToMultipleDevices
@@ -36,19 +36,21 @@ const ORDER_MESSAGES = {
   }
 };
 
-// Send order status update notification
 const sendOrderStatusNotification = async (user, order, status, customMessage = null) => {
+  
+  const tuser = await User.findById(user);
+
+  const fcmToken = tuser?.fcmToken;
+
+
   try {
-    if (!user.fcmToken) {
+  if (!fcmToken) {
       console.log('User has no FCM token, skipping notification');
       return { success: false, message: 'No FCM token' };
     }
 
     const message = ORDER_MESSAGES[status];
-    if (!message && !customMessage) {
-      console.log('No message template for status:', status);
-      return { success: false, message: 'No message template' };
-    }
+  
 
     const title = customMessage?.title || message.title;
     const body = customMessage?.body || message.body;
@@ -61,7 +63,7 @@ const sendOrderStatusNotification = async (user, order, status, customMessage = 
       timestamp: new Date().toISOString()
     };
 
-    return await sendNotificationToDevice(user.fcmToken, title, body, data);
+    return await sendNotificationToDevice(fcmToken, title, body, data);
   } catch (error) {
     console.error('Error sending order status notification:', error);
     return { success: false, error: error.message };

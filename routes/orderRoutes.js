@@ -209,22 +209,7 @@ router.post('/', [
           });
         }
       });
-   await sendNotificationToTopic(
-      'admin_orders',
-      '🔔 New Order Received!',
-      `Order ${order.orderNumber} - ${order.total.toFixed(2)}`,
-      {
-        type: 'new_order',
-        orderId: order._id.toString(),
-        orderNumber: order.orderNumber,
-        customerName: `${order.userId.firstName} ${order.userId.lastName}`,
-        total: order.total,
-        deliveryType: order.deliveryType,
-        createdAt: order.createdAt.toISOString(),
-        status: order.status,
-      }
-    );
- 
+
       // Remove duplicates
       const uniqueAdminTokens = [...new Set(adminTokens)];
 

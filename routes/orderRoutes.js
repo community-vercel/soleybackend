@@ -438,7 +438,7 @@ router.patch('/:id/status', [
   auth,
   authorize('admin', 'manager'),
   param('id').isMongoId().withMessage('Invalid order ID'),
-  body('status').isIn(['pending', 'confirmed', 'preparing', 'pickup', 'ready', 'out-for-delivery', 'delivered', 'cancelled']).withMessage('Invalid status'),
+  body('status').isIn(['pending', 'confirmed', 'preparing', 'pickup', 'ready','shop', 'out-for-delivery', 'delivered', 'cancelled']).withMessage('Invalid status'),
   body('message').optional().trim()
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);

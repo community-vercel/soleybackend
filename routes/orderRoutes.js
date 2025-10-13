@@ -116,12 +116,7 @@ router.post('/', [
 
   const deliveryFee = clientDeliveryFee !== undefined ? clientDeliveryFee : 0.0;
   
-  console.log('Order delivery details:');
-  console.log('  - Type:', deliveryType);
-  console.log('  - Payment Method:', paymentMethod);
-  console.log('  - COD Payment Type:', codPaymentType); // NEW: Log COD payment type
-  console.log('  - Delivery Fee:', deliveryFee);
-  console.log('  - Subtotal:', subtotal);
+
 
   const taxRate = 0.00;
   const tax = subtotal * taxRate;
@@ -214,7 +209,22 @@ router.post('/', [
           });
         }
       });
-
+   await sendNotificationToTopic(
+      'admin_orders',
+      '🔔 New Order Received!',
+      `Order ${order.orderNumber} - ${order.total.toFixed(2)}`,
+      {
+        type: 'new_order',
+        orderId: order._id.toString(),
+        orderNumber: order.orderNumber,
+        customerName: `${order.userId.firstName} ${order.userId.lastName}`,
+        total: order.total,
+        deliveryType: order.deliveryType,
+        createdAt: order.createdAt.toISOString(),
+        status: order.status,
+      }
+    );
+ 
       // Remove duplicates
       const uniqueAdminTokens = [...new Set(adminTokens)];
 
@@ -428,7 +438,7 @@ router.patch('/:id/status', [
   auth,
   authorize('admin', 'manager'),
   param('id').isMongoId().withMessage('Invalid order ID'),
-  body('status').isIn(['pending', 'confirmed', 'preparing', 'ready', 'out-for-delivery', 'delivered', 'cancelled']).withMessage('Invalid status'),
+  body('status').isIn(['pending', 'confirmed', 'preparing', 'pickup', 'ready', 'out-for-delivery', 'delivered', 'cancelled']).withMessage('Invalid status'),
   body('message').optional().trim()
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);

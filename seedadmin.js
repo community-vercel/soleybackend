@@ -1,108 +1,196 @@
-// server/seeds/seedSuperAdmin.js
+// scripts/migrateToMultilingual.js
+// Run this script once to migrate existing data to multilingual format
+
 const mongoose = require('mongoose');
-const bcrypt = require('bcryptjs');
-const User = require('./models/User'); // Adjust path to your User model
-const dotenv = require('dotenv');
+require('dotenv').config();
 
-dotenv.config();
+// Import models (make sure they use the OLD schema first)
+const { FoodItem, Category } = require('./models/Category');
 
-// Connect to MongoDB
-mongoose.connect('mongodb+srv://support_db_user:gcDSW2GGTI7WRLh1@sorely.cnixywk.mongodb.net/?retryWrites=true&w=majority&appName=sorely', {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-})
-  .then(() => console.log('Connected to MongoDB'))
-  .catch((err) => {
-    console.error('MongoDB connection error:', err);
-    process.exit(1);
-  });
+const migrateData = async () => {
+  try {
+    // Connect to MongoDB
+    await mongoose.connect(process.env.MONGODB_URI);
+    console.log('✅ Connected to MongoDB');
 
-// Superadmin user data
-const superAdminData = {
-  firstName: 'Super',
-  lastName: 'Admin',
-  email: 'soelyadmin@examplee.com',
-  phone: '+9234234567870',
-  password: 'admin778',
-  role: 'admin',
-  emailVerified: true,
-  phoneVerified: true,
-  isActive: true,
-  addresses: [],
-  preferences: {
-    notifications: {
-      email: true,
-      sms: true,
-      push: true,
-    },
-    dietary: {
-      vegetarian: false,
-      vegan: false,
-      glutenFree: false,
-      nutFree: false,
-    },
-  },
+    // Migrate Categories
+    console.log('\n📁 Migrating Categories...');
+    const categories = await Category.find({});
+    console.log(`Found ${categories.length} categories to migrate`);
+
+    for (const category of categories) {
+      // Check if already migrated
+      if (typeof category.name === 'object' && category.name.en) {
+        console.log(`⏭️  Category "${category.name.en}" already migrated, skipping...`);
+        continue;
+      }
+
+      const oldName = category.name;
+      const oldDescription = category.description;
+
+      await Category.updateOne(
+        { _id: category._id },
+        {
+          $set: {
+            name: {
+              en: oldName || 'Untitled',
+              es: '', // Empty, to be filled by admin
+              ca: '',
+              ar: ''
+            },
+            description: oldDescription ? {
+              en: oldDescription,
+              es: '',
+              ca: '',
+              ar: ''
+            } : undefined
+          }
+        }
+      );
+
+      console.log(`✅ Migrated category: ${oldName}`);
+    }
+
+    // Migrate Food Items
+    console.log('\n🍔 Migrating Food Items...');
+    const foodItems = await FoodItem.find({});
+    console.log(`Found ${foodItems.length} food items to migrate`);
+
+    for (const item of foodItems) {
+      // Check if already migrated
+      if (typeof item.name === 'object' && item.name.en) {
+        console.log(`⏭️  Food item "${item.name.en}" already migrated, skipping...`);
+        continue;
+      }
+
+      const updateData = {
+        name: {
+          en: item.name || 'Untitled',
+          es: '',
+          ca: '',
+          ar: ''
+        },
+        description: {
+          en: item.description || '',
+          es: '',
+          ca: '',
+          ar: ''
+        }
+      };
+
+      // Migrate meal sizes if they exist
+      if (item.mealSizes && item.mealSizes.length > 0) {
+        updateData.mealSizes = item.mealSizes.map(size => ({
+          name: typeof size.name === 'string' ? {
+            en: size.name,
+            es: '',
+            ca: '',
+            ar: ''
+          } : size.name,
+          additionalPrice: size.additionalPrice || 0
+        }));
+      }
+
+      // Migrate extras if they exist
+      if (item.extras && item.extras.length > 0) {
+        updateData.extras = item.extras.map(extra => ({
+          name: typeof extra.name === 'string' ? {
+            en: extra.name,
+            es: '',
+            ca: '',
+            ar: ''
+          } : extra.name,
+          price: extra.price || 0
+        }));
+      }
+
+      // Migrate addons if they exist
+      if (item.addons && item.addons.length > 0) {
+        updateData.addons = item.addons.map(addon => ({
+          name: typeof addon.name === 'string' ? {
+            en: addon.name,
+            es: '',
+            ca: '',
+            ar: ''
+          } : addon.name,
+          price: addon.price || 0,
+          imageUrl: addon.imageUrl || ''
+        }));
+      }
+
+      // Migrate ingredients if they exist
+      if (item.ingredients && item.ingredients.length > 0) {
+        updateData.ingredients = item.ingredients.map(ingredient => ({
+          name: typeof ingredient.name === 'string' ? {
+            en: ingredient.name,
+            es: '',
+            ca: '',
+            ar: ''
+          } : ingredient.name,
+          optional: ingredient.optional || false
+        }));
+      }
+
+      // Migrate tags if they exist
+      if (item.tags && item.tags.length > 0) {
+        updateData.tags = item.tags.map(tag => 
+          typeof tag === 'string' ? {
+            en: tag,
+            es: '',
+            ca: '',
+            ar: ''
+          } : tag
+        );
+      }
+
+      // Migrate SEO data if exists
+      if (item.seoData) {
+        updateData.seoData = {
+          metaTitle: item.seoData.metaTitle ? {
+            en: item.seoData.metaTitle,
+            es: '',
+            ca: '',
+            ar: ''
+          } : undefined,
+          metaDescription: item.seoData.metaDescription ? {
+            en: item.seoData.metaDescription,
+            es: '',
+            ca: '',
+            ar: ''
+          } : undefined,
+          keywords: item.seoData.keywords?.map(kw => 
+            typeof kw === 'string' ? {
+              en: kw,
+              es: '',
+              ca: '',
+              ar: ''
+            } : kw
+          )
+        };
+      }
+
+      await FoodItem.updateOne(
+        { _id: item._id },
+        { $set: updateData }
+      );
+
+      console.log(`✅ Migrated food item: ${item.name}`);
+    }
+
+    console.log('\n🎉 Migration completed successfully!');
+    console.log('\n📝 Next steps:');
+    console.log('1. Update your Category and FoodItem models with the new multilingual schema');
+    console.log('2. Use the admin panel to fill in Spanish, Catalan, and Arabic translations');
+    console.log('3. Test the API with different language parameters (?lang=es, ?lang=ca, ?lang=ar)');
+
+  } catch (error) {
+    console.error('❌ Migration failed:', error);
+  } finally {
+    await mongoose.connection.close();
+    console.log('\n👋 Database connection closed');
+    process.exit(0);
+  }
 };
 
-async function seedSuperAdmin() {
-  try {
-    // Check if superadmin already exists
-    const existingUser = await User.findOne({
-      $or: [{ email: superAdminData.email }, { phone: superAdminData.phone }],
-    }).select('+password');
-
-    if (existingUser) {
-      console.log('Superadmin already exists:', existingUser.email);
-      console.log('Existing password hash:', existingUser.password);
-      const isMatch = await bcrypt.compare(superAdminData.password, existingUser.password);
-      console.log('Password match test for existing user:', isMatch);
-      await mongoose.connection.close();
-      process.exit(0);
-    }
-
-    // Explicitly hash password
-    console.log('Generating password hash for:', superAdminData.password);
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(superAdminData.password, salt);
-    console.log('Generated hash:', hashedPassword);
-
-    // Create new superadmin
-    const superAdmin = new User({
-      ...superAdminData,
-      password: hashedPassword,
-    });
-
-    // Mark password as unmodified to prevent pre('save') hook
-    superAdmin.set('password', hashedPassword, { strict: false });
-    console.log('Saving user with password:', superAdmin.password);
-    await superAdmin.save({ validateBeforeSave: true });
-
-    // Verify the saved user
-    const savedUser = await User.findOne({ email: superAdminData.email }).select('+password');
-    console.log('Saved user password hash:', savedUser.password);
-    console.log('Expected hash:', hashedPassword);
-    const isMatch = await bcrypt.compare(superAdminData.password, savedUser.password);
-    console.log('Password verification test for new user:', isMatch);
-
-    if (!isMatch) {
-      throw new Error('Password verification failed after creation');
-    }
-
-    console.log('Superadmin created successfully');
-    console.log('Credentials:', {
-      email: superAdminData.email,
-      phone: superAdminData.phone,
-      password: superAdminData.password,
-      role: superAdminData.role,
-    });
-
-    await mongoose.connection.close();
-    process.exit(0);
-  } catch (error) {
-    console.error('Error seeding superadmin:', error);
-    await mongoose.connection.close();
-    process.exit(1);
-  }
-}
-
-seedSuperAdmin();
+// Run migration
+migrateData();

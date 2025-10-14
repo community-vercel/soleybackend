@@ -3,6 +3,7 @@ const { query, body, param, validationResult } = require('express-validator');
 const { FoodItem, Category } = require('../models/Category');
 const { auth, authorize, optionalAuth } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
+const { detectLanguage, localizeResponse } = require('../middleware/languageMiddleware');
 
 const router = express.Router();
 
@@ -10,20 +11,21 @@ const router = express.Router();
 // @route   GET /api/v1/food-items
 // @access  Public
 
-
+router.use(detectLanguage);
+router.use(localizeResponse);
 
 router.get('/', [
-  query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
-  query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
-  query('category').optional().isMongoId().withMessage('Category must be a valid ID'),
-  query('featured').optional().isBoolean().withMessage('Featured must be boolean'),
-  query('popular').optional().isBoolean().withMessage('Popular must be boolean'),
-  query('veg').optional().isBoolean().withMessage('Veg must be boolean'),
-  query('search').optional().trim().isLength({ min: 2 }).withMessage('Search query must be at least 2 characters'),
-  query('priceMin').optional().isFloat({ min: 0 }).withMessage('Price min must be non-negative'),
-  query('priceMax').optional().isFloat({ min: 0 }).withMessage('Price max must be non-negative'),
-  query('rating').optional().isFloat({ min: 0, max: 5 }).withMessage('Rating must be between 0 and 5'),
-  query('sortBy').optional().isIn(['relevance', 'price-low', 'price-high', 'rating', 'popular', 'newest']).withMessage('Invalid sort option')
+  query('page').optional().isInt({ min: 1 }),
+  query('limit').optional().isInt({ min: 1, max: 100 }),
+  query('category').optional().isMongoId(),
+  query('featured').optional().isBoolean(),
+  query('popular').optional().isBoolean(),
+  query('veg').optional().isBoolean(),
+  query('search').optional().trim().isLength({ min: 2 }),
+  query('priceMin').optional().isFloat({ min: 0 }),
+  query('priceMax').optional().isFloat({ min: 0 }),
+  query('rating').optional().isFloat({ min: 0, max: 5 }),
+  query('sortBy').optional().isIn(['relevance', 'price-low', 'price-high', 'rating', 'popular', 'newest'])
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -49,7 +51,6 @@ router.get('/', [
   } = req.query;
 
   const skip = (page - 1) * limit;
-
   let query = { isActive: true };
 
   // Apply filters
@@ -66,9 +67,15 @@ router.get('/', [
     if (priceMax !== undefined) query.price.$lte = parseFloat(priceMax);
   }
 
-  // Search functionality
+  // Search functionality - search in current language
   if (search) {
-    query.$text = { $search: search };
+    const lang = req.language;
+    query.$or = [
+      { [`name.${lang}`]: { $regex: search, $options: 'i' } },
+      { [`description.${lang}`]: { $regex: search, $options: 'i' } },
+      { [`name.en`]: { $regex: search, $options: 'i' } },
+      { [`description.en`]: { $regex: search, $options: 'i' } }
+    ];
   }
 
   // Build sort options
@@ -89,23 +96,18 @@ router.get('/', [
     case 'newest':
       sortOptions = { createdAt: -1 };
       break;
-    default: // relevance
-      if (search) {
-        sortOptions = { score: { $meta: 'textScore' } };
-      } else {
-        sortOptions = { 'rating.average': -1 };
-      }
+    default:
+      sortOptions = { 'rating.average': -1 };
   }
 
   // Execute query
   const items = await FoodItem.find(query)
-    .populate('category', 'name icon')
+    .populate('category', 'name icon imageUrl')
     .sort(sortOptions)
     .limit(parseInt(limit))
     .skip(skip)
-    .select('-reviews'); // Exclude reviews for performance
+    .select('-reviews');
 
-  // Get total count for pagination
   const totalItems = await FoodItem.countDocuments(query);
   const totalPages = Math.ceil(totalItems / limit);
 
@@ -115,9 +117,11 @@ router.get('/', [
     totalItems,
     totalPages,
     currentPage: parseInt(page),
+    language: req.language,
     items
   });
 }));
+
 
 
 
@@ -230,15 +234,19 @@ router.get('/getallitems', [
 // @route   GET /api/v1/food-items/featured
 // @access  Public
 router.get('/featured', [
-  query('limit').optional().isInt({ min: 1, max: 20 }).withMessage('Limit must be between 1 and 20')
+  query('limit').optional().isInt({ min: 1, max: 20 })
 ], asyncHandler(async (req, res) => {
   const { limit = 6 } = req.query;
 
-  const items = await FoodItem.getFeaturedItems(parseInt(limit));
+  const items = await FoodItem.find({ isFeatured: true, isActive: true })
+    .populate('category', 'name icon')
+    .sort({ createdAt: -1 })
+    .limit(parseInt(limit));
 
   res.json({
     success: true,
     count: items.length,
+    language: req.language,
     items
   });
 }));
@@ -247,16 +255,63 @@ router.get('/featured', [
 // @route   GET /api/v1/food-items/popular
 // @access  Public
 router.get('/popular', [
-  query('limit').optional().isInt({ min: 1, max: 20 }).withMessage('Limit must be between 1 and 20')
+  query('limit').optional().isInt({ min: 1, max: 20 })
 ], asyncHandler(async (req, res) => {
   const { limit = 10 } = req.query;
 
-  const items = await FoodItem.getPopularItems(parseInt(limit));
+  const items = await FoodItem.find({ isActive: true })
+    .populate('category', 'name icon')
+    .sort({ totalSold: -1, 'rating.average': -1 })
+    .limit(parseInt(limit));
 
   res.json({
     success: true,
     count: items.length,
+    language: req.language,
     items
+  });
+}));
+
+// @desc    Get single food item (localized)
+// @route   GET /api/v1/food-items/:id?lang=es
+// @access  Public
+router.get('/:id', [
+  param('id').isMongoId().withMessage('Invalid food item ID')
+], optionalAuth, asyncHandler(async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      success: false,
+      message: 'Validation failed',
+      errors: errors.array()
+    });
+  }
+
+  const item = await FoodItem.findById(req.params.id)
+    .populate('category', 'name icon')
+    .populate({
+      path: 'reviews.user',
+      select: 'firstName lastName avatar'
+    });
+
+  if (!item) {
+    return res.status(404).json({
+      success: false,
+      message: 'Food item not found'
+    });
+  }
+
+  if (!item.isActive) {
+    return res.status(404).json({
+      success: false,
+      message: 'Food item is not available'
+    });
+  }
+
+  res.json({
+    success: true,
+    language: req.language,
+    item
   });
 }));
 
@@ -358,8 +413,14 @@ router.post('/:id/reviews', [
 router.post('/', [
   auth,
   authorize('admin', 'manager'),
-  body('name').trim().notEmpty().withMessage('Name is required'),
-  body('description').trim().notEmpty().withMessage('Description is required'),
+  body('name.en').trim().notEmpty().withMessage('English name is required'),
+  body('name.es').optional().trim(),
+  body('name.ca').optional().trim(),
+  body('name.ar').optional().trim(),
+  body('description.en').trim().notEmpty().withMessage('English description is required'),
+  body('description.es').optional().trim(),
+  body('description.ca').optional().trim(),
+  body('description.ar').optional().trim(),
   body('price').isFloat({ min: 0 }).withMessage('Price must be non-negative'),
   body('imageUrl').isURL().withMessage('Valid image URL is required'),
   body('category').isMongoId().withMessage('Valid category ID is required')
@@ -373,7 +434,6 @@ router.post('/', [
     });
   }
 
-  // Check if category exists
   const category = await Category.findById(req.body.category);
   if (!category) {
     return res.status(400).json({
@@ -392,6 +452,7 @@ router.post('/', [
   });
 }));
 
+
 // @desc    Update food item
 // @route   PUT /api/v1/food-items/:id
 // @access  Private (Admin/Manager only)
@@ -399,11 +460,17 @@ router.put('/:id', [
   auth,
   authorize('admin', 'manager'),
   param('id').isMongoId().withMessage('Invalid food item ID'),
-  body('name').optional().trim().notEmpty().withMessage('Name cannot be empty'),
-  body('description').optional().trim().notEmpty().withMessage('Description cannot be empty'),
-  body('price').optional().isFloat({ min: 0 }).withMessage('Price must be non-negative'),
-  body('imageUrl').optional().isURL().withMessage('Valid image URL is required'),
-  body('category').optional().isMongoId().withMessage('Valid category ID is required')
+  body('name.en').optional().trim().notEmpty(),
+  body('name.es').optional().trim(),
+  body('name.ca').optional().trim(),
+  body('name.ar').optional().trim(),
+  body('description.en').optional().trim().notEmpty(),
+  body('description.es').optional().trim(),
+  body('description.ca').optional().trim(),
+  body('description.ar').optional().trim(),
+  body('price').optional().isFloat({ min: 0 }),
+  body('imageUrl').optional().isURL(),
+  body('category').optional().isMongoId()
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -423,7 +490,6 @@ router.put('/:id', [
     });
   }
 
-  // Check if category exists (if being updated)
   if (req.body.category) {
     const category = await Category.findById(req.body.category);
     if (!category) {
@@ -446,24 +512,14 @@ router.put('/:id', [
     item
   });
 }));
-
 // @desc    Delete food item
 // @route   DELETE /api/v1/food-items/:id
 // @access  Private (Admin only)
 router.delete('/:id', [
   auth,
   authorize('admin'),
-  param('id').isMongoId().withMessage('Invalid food item ID')
+  param('id').isMongoId()
 ], asyncHandler(async (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({
-      success: false,
-      message: 'Validation failed',
-      errors: errors.array()
-    });
-  }
-
   const item = await FoodItem.findById(req.params.id);
 
   if (!item) {
@@ -480,6 +536,7 @@ router.delete('/:id', [
     message: 'Food item deleted successfully'
   });
 }));
+
 
 // @desc    Update stock for food item
 // @route   PATCH /api/v1/food-items/:id/stock

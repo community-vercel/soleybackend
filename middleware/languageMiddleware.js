@@ -1,145 +1,185 @@
-// middleware/languageMiddleware.js
+// ============================================
+// BACKEND FIX: middleware/languageMiddleware.js
+// ============================================
+// CRITICAL: The problem is that localizeResponse is converting
+// multilingual objects into single strings, which breaks Flutter parsing
 
 const supportedLanguages = ['en', 'es', 'ca', 'ar'];
 const defaultLanguage = 'en';
 
 /**
  * Middleware to detect and set the user's preferred language
- * Checks in order: query param, header, user preference, default
  */
 const detectLanguage = (req, res, next) => {
   let language = defaultLanguage;
   
-  // 1. Check query parameter (?lang=es)
+  // Priority order for language detection
+  // 1. Query parameter (?lang=es)
   if (req.query.lang && supportedLanguages.includes(req.query.lang)) {
     language = req.query.lang;
   }
-  // 2. Check Accept-Language header
+  // 2. X-Language custom header (RECOMMENDED for mobile apps)
+  else if (req.headers['x-language'] && supportedLanguages.includes(req.headers['x-language'])) {
+    language = req.headers['x-language'];
+  }
+  // 3. Accept-Language header
   else if (req.headers['accept-language']) {
     const headerLang = req.headers['accept-language'].split(',')[0].split('-')[0];
     if (supportedLanguages.includes(headerLang)) {
       language = headerLang;
     }
   }
-  // 3. Check X-Language custom header (recommended for mobile apps)
-  else if (req.headers['x-language'] && supportedLanguages.includes(req.headers['x-language'])) {
-    language = req.headers['x-language'];
-  }
-  // 4. Check user preference from auth token (if authenticated)
+  // 4. User preference from auth token (if authenticated)
   else if (req.user && req.user.preferredLanguage && supportedLanguages.includes(req.user.preferredLanguage)) {
     language = req.user.preferredLanguage;
   }
   
-  // Set language on request object
+  // CRITICAL: Set language on request object
   req.language = language;
   
-  // Set language in response header for client reference
+  // Set language in response header
   res.setHeader('Content-Language', language);
+  
+  console.log(`🌍 Language detected: ${language} from ${req.path}`);
   
   next();
 };
 
 /**
- * Helper function to get localized field value
+ * Helper to check if object is a multilingual text object
  */
-const getLocalizedField = (field, language = 'en') => {
-  if (!field) return '';
-  if (typeof field === 'string') return field;
-  return field[language] || field.en || '';
+const isMultilingualObject = (obj) => {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return false;
+  const keys = Object.keys(obj);
+  return keys.some(key => supportedLanguages.includes(key));
 };
 
 /**
- * Helper function to localize an entire object
+ * CRITICAL FIX: Return FULL multilingual object, not just one language
+ * This allows Flutter to parse all languages and choose locally
  */
-const localizeObject = (obj, language = 'en') => {
-  if (!obj) return null;
+const preserveMultilingualFields = (obj) => {
+  if (!obj || typeof obj !== 'object') return obj;
   
-  const localized = {};
+  // Handle Mongoose documents
+  const plainObj = obj._doc || obj;
+  const result = {};
   
-  for (const key in obj) {
-    const value = obj[key];
+  for (const key in plainObj) {
+    const value = plainObj[key];
     
-    // Skip if value is null or undefined
-    if (value === null || value === undefined) {
-      localized[key] = value;
+    // Skip internal MongoDB fields
+    if (key === '__v' || key === '_id') {
+      result[key] = value;
       continue;
     }
     
-    // If it's a multilingual object (has en, es, ca, ar keys)
-    if (typeof value === 'object' && 
-        !Array.isArray(value) && 
-        ('en' in value || 'es' in value || 'ca' in value || 'ar' in value)) {
-      localized[key] = value[language] || value.en || '';
+    // Preserve multilingual objects AS IS (don't localize)
+    if (isMultilingualObject(value)) {
+      result[key] = {
+        en: value.en || '',
+        es: value.es || '',
+        ca: value.ca || '',
+        ar: value.ar || ''
+      };
     }
-    // If it's an array, localize each item
+    // Handle arrays
     else if (Array.isArray(value)) {
-      localized[key] = value.map(item => {
-        if (typeof item === 'object' && item !== null) {
-          return localizeObject(item, language);
-        }
-        return item;
-      });
+      result[key] = value.map(item => preserveMultilingualFields(item));
     }
-    // If it's a nested object, recurse
-    else if (typeof value === 'object' && value !== null) {
-      localized[key] = localizeObject(value, language);
+    // Handle nested objects (but not Mongoose special objects)
+    else if (value && typeof value === 'object' && value.constructor.name === 'Object') {
+      result[key] = preserveMultilingualFields(value);
     }
-    // Otherwise, keep as is
+    // Keep everything else as is
     else {
-      localized[key] = value;
+      result[key] = value;
     }
   }
   
-  return localized;
+  return result;
 };
 
 /**
- * Response wrapper that automatically localizes data
+ * UPDATED: Response wrapper that preserves multilingual data
+ * This is the KEY FIX - don't localize server-side, send all languages
  */
 const localizeResponse = (req, res, next) => {
-  // Store original json method
   const originalJson = res.json.bind(res);
   
-  // Override json method
   res.json = function(data) {
-    // Only localize if success is true and items/data exists
-    if (data && data.success && req.language !== 'en') {
-      // Localize single item
-      if (data.item && typeof data.item.getLocalized === 'function') {
-        data.item = data.item.getLocalized(req.language);
-      }
-      // Localize array of items
-      else if (data.items && Array.isArray(data.items)) {
-        data.items = data.items.map(item => 
-          typeof item.getLocalized === 'function' 
-            ? item.getLocalized(req.language)
-            : localizeObject(item._doc || item, req.language)
-        );
-      }
-      // Localize single category
-      else if (data.category && typeof data.category.getLocalized === 'function') {
-        data.category = data.category.getLocalized(req.language);
-      }
-      // Localize array of categories
-      else if (data.categories && Array.isArray(data.categories)) {
-        data.categories = data.categories.map(cat => 
-          typeof cat.getLocalized === 'function'
-            ? cat.getLocalized(req.language)
-            : localizeObject(cat._doc || cat, req.language)
-        );
-      }
-      // Localize orders (for items in orders)
-      else if (data.order && data.order.items) {
-        data.order = localizeObject(data.order._doc || data.order, req.language);
-      }
-      else if (data.orders && Array.isArray(data.orders)) {
-        data.orders = data.orders.map(order => 
-          localizeObject(order._doc || order, req.language)
-        );
+    if (!data || !data.success) {
+      return originalJson(data);
+    }
+    
+    console.log(`📦 Localizing response for language: ${req.language}`);
+    
+    // Process single item
+    if (data.item) {
+      // If item has getLocalized method, use it to get the localized version
+      // BUT also include the full multilingual data
+      if (typeof data.item.getLocalized === 'function') {
+        const localized = data.item.getLocalized(req.language);
+        // Send BOTH localized data AND full multilingual data
+        data.item = {
+          ...localized,
+          _multilingual: preserveMultilingualFields(data.item)
+        };
+      } else {
+        data.item = preserveMultilingualFields(data.item);
       }
     }
     
-    // Call original json method
+    // Process array of items
+    if (data.items && Array.isArray(data.items)) {
+      data.items = data.items.map(item => {
+        if (typeof item.getLocalized === 'function') {
+          return {
+            ...item.getLocalized(req.language),
+            _multilingual: preserveMultilingualFields(item)
+          };
+        }
+        return preserveMultilingualFields(item);
+      });
+    }
+    
+    // Process single category
+    if (data.category) {
+      if (typeof data.category.getLocalized === 'function') {
+        data.category = {
+          ...data.category.getLocalized(req.language),
+          _multilingual: preserveMultilingualFields(data.category)
+        };
+      } else {
+        data.category = preserveMultilingualFields(data.category);
+      }
+    }
+    
+    // Process array of categories
+    if (data.categories && Array.isArray(data.categories)) {
+      data.categories = data.categories.map(cat => {
+        if (typeof cat.getLocalized === 'function') {
+          return {
+            ...cat.getLocalized(req.language),
+            _multilingual: preserveMultilingualFields(cat)
+          };
+        }
+        return preserveMultilingualFields(cat);
+      });
+    }
+    
+    // Process orders
+    if (data.order) {
+      data.order = preserveMultilingualFields(data.order);
+    }
+    if (data.orders && Array.isArray(data.orders)) {
+      data.orders = data.orders.map(order => preserveMultilingualFields(order));
+    }
+    
+    // Include language info in response
+    data.language = req.language;
+    data.availableLanguages = supportedLanguages;
+    
     return originalJson(data);
   };
   
@@ -149,8 +189,7 @@ const localizeResponse = (req, res, next) => {
 module.exports = {
   detectLanguage,
   localizeResponse,
-  getLocalizedField,
-  localizeObject,
+  preserveMultilingualFields,
   supportedLanguages,
   defaultLanguage
 };

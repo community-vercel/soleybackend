@@ -40,7 +40,7 @@ router.post('/', [
     items,
     deliveryType,
     paymentMethod,
-    codPaymentType,
+    codPaymentType, // NEW: Get COD payment type
     branchId,
     deliveryAddress,
     specialInstructions,
@@ -67,60 +67,95 @@ router.post('/', [
     });
   }
 
-  // Process cart items - validate they exist but use frontend prices
+  // Process cart items and calculate totals
   let processedItems = [];
   let subtotal = 0;
 
-  for (const item of items) {
-    const foodItemId = item.foodItem?.id || item.foodItem;
-    const foodItem = await FoodItem.findById(foodItemId);
+// In your POST /api/v1/orders route - replace the item processing loop
+for (const item of items) {
+  const foodItemId = item.foodItem?.id || item.foodItem;
+  const foodItem = await FoodItem.findById(foodItemId);
 
-    if (!foodItem || !foodItem.isActive) {
-      return res.status(400).json({
-        success: false,
-        message: `Food item ${foodItemId} is not available`
-      });
-    }
-
-    // Use prices from frontend - DO NOT recalculate
-    const unitPrice = item.unitPrice;
-    const totalPrice = item.totalPrice;
-
-    processedItems.push({
-      foodItem: foodItem._id,
-      quantity: item.quantity,
-      selectedMealSize: item.selectedMealSize,
-      selectedExtras: item.selectedExtras || [],
-      selectedAddons: item.selectedAddons || [],
-      specialInstructions: item.specialInstructions,
-      unitPrice,
-      totalPrice
+  if (!foodItem || !foodItem.isActive) {
+    return res.status(400).json({
+      success: false,
+      message: `Food item ${foodItemId} is not available`
     });
-
-    subtotal += totalPrice;
-    await foodItem.updateStock(item.quantity, "subtract");
   }
 
-  // Use frontend totals as-is
-  const deliveryFee = clientDeliveryFee || 0.0;
-  const tax = clientTax || 0;
-  const discount = clientSubtotal - (clientSubtotal - (couponCode ? clientSubtotal * 0.1 : 0));
-  const total = clientTotal;
+  // Use prices already calculated on frontend
+  const unitPrice = item.unitPrice; // Trust frontend calculation
+  const totalPrice = item.totalPrice; // Trust frontend calculation
 
-  // Just log if there's a mismatch, don't recalculate
-  if (clientTotal !== undefined) {
-    const expectedTotal = clientSubtotal + deliveryFee + tax - discount;
-    if (Math.abs(expectedTotal - clientTotal) > 0.01) {
-      console.warn('⚠️ Total mismatch:', {
-        expected: expectedTotal,
-        received: clientTotal,
-        difference: Math.abs(expectedTotal - clientTotal)
-      });
-    }
+  processedItems.push({
+    foodItem: foodItem._id,
+    quantity: item.quantity,
+    selectedMealSize: item.selectedMealSize,
+    selectedExtras: item.selectedExtras || [],
+    selectedAddons: item.selectedAddons || [],
+    specialInstructions: item.specialInstructions,
+    unitPrice,
+    totalPrice
+  });
+
+  subtotal += totalPrice;
+
+  await foodItem.updateStock(item.quantity, "subtract");
+}
+
+// Verify total matches frontend calculation
+const calculatedTotal = subtotal + clientDeliveryFee + (subtotal * 0.00) - 0;
+
+if (clientTotal !== undefined && Math.abs(calculatedTotal - clientTotal) > 0.01) {
+  console.warn('Total mismatch:', {
+    calculated: calculatedTotal,
+    client: clientTotal,
+    difference: Math.abs(calculatedTotal - clientTotal)
+  });
+  // Still allow order but log warning
+}
+
+  const deliveryFee = clientDeliveryFee !== undefined ? clientDeliveryFee : 0.0;
+  
+
+
+  const taxRate = 0.00;
+  const tax = subtotal * taxRate;
+  
+  let discount = 0;
+  if (couponCode) {
+    discount = subtotal * 0.1;
+  }
+
+  const total = subtotal + deliveryFee + tax - discount;
+
+  if (clientTotal !== undefined && Math.abs(total - clientTotal) > 0.01) {
+    console.warn('Total mismatch:', {
+      calculated: total,
+      client: clientTotal,
+      difference: Math.abs(total - clientTotal)
+    });
   }
 
   const orderNumber = "ORD" + Date.now();
 
+  // Create order with COD payment type
+  const orderData = {
+    orderNumber,
+    userId: req.user.id,
+    items: processedItems,
+    subtotal,
+    deliveryFee,
+    tax,
+    discount,
+    couponCode,
+    total,
+    paymentMethod,
+    deliveryType,
+    deliveryAddress,
+    branchId,
+    specialInstructions
+  };
   const orderData = {
     orderNumber,
     userId: req.user.id,
@@ -136,42 +171,54 @@ router.post('/', [
     deliveryAddress,
     branchId,
     specialInstructions,
-    paymentStatus: PaymentStatus.pending
   };
 
+  // Add COD payment type if applicable
   if (codPaymentType) {
     orderData.codPaymentType = codPaymentType;
   }
 
   const order = await Order.create(orderData);
 
+  // Populate order details
   await order.populate([
     { path: 'userId', select: 'firstName lastName email phone' },
     { path: 'items.foodItem', select: 'name imageUrl price' },
     { path: 'branchId', select: 'name address phone' }
   ]);
+    const orderUserId = order.userId._id ? order.userId._id.toString() : order.userId.toString();
 
-  const orderUserId = order.userId._id ? order.userId._id.toString() : order.userId.toString();
-
+ 
   try {
-    // Send notification to customer
+    // 1. Send notification to customer
     if (order.userId?.fcmToken) {
-      await sendOrderStatusNotification(orderUserId, order, 'pending');
+      await sendOrderStatusNotification(
+        orderUserId,
+        order,
+        'pending'
+      );
       console.log('✅ Customer notification sent');
     }
 
-    // Send notification to admins
-    const adminUsers = await User.find({
+    // 2. Send notification to ALL admins and managers
+    const adminUsers = await User.find({ 
       role: { $in: ['admin', 'manager', 'superadmin'] },
       isActive: true,
       fcmToken: { $exists: true, $ne: null }
     }).select('firstName lastName email fcmToken fcmTokens');
 
     if (adminUsers.length > 0) {
+      console.log(`📢 Sending notifications to ${adminUsers.length} admins/managers`);
+
+      // Collect all FCM tokens from admins (including multiple devices)
       const adminTokens = [];
       adminUsers.forEach(admin => {
-        if (admin.fcmToken) adminTokens.push(admin.fcmToken);
-        if (admin.fcmTokens?.length) {
+        // Add primary token
+        if (admin.fcmToken) {
+          adminTokens.push(admin.fcmToken);
+        }
+        // Add tokens from multiple devices
+        if (admin.fcmTokens && Array.isArray(admin.fcmTokens)) {
           admin.fcmTokens.forEach(tokenObj => {
             if (tokenObj.token && !adminTokens.includes(tokenObj.token)) {
               adminTokens.push(tokenObj.token);
@@ -180,15 +227,32 @@ router.post('/', [
         }
       });
 
+      // Remove duplicates
       const uniqueAdminTokens = [...new Set(adminTokens)];
+
+      console.log(`📱 Sending to ${uniqueAdminTokens.length} admin devices`);
+
       if (uniqueAdminTokens.length > 0) {
-        await sendNewOrderNotification(uniqueAdminTokens, order);
-        console.log('✅ Admin notifications sent');
+        const notificationResult = await sendNewOrderNotification(
+          uniqueAdminTokens, 
+          order
+        );
+
+        if (notificationResult.success) {
+          console.log('✅ Admin notifications sent successfully');
+        } else {
+          console.error('❌ Failed to send admin notifications:', notificationResult.error);
+        }
       }
+    } else {
+      console.log('⚠️ No admin users found with FCM tokens');
     }
+
   } catch (notificationError) {
-    console.error('❌ Notification error:', notificationError);
+    console.error('❌ Error sending notifications:', notificationError);
+    // Don't fail the order creation if notifications fail
   }
+
 
   res.status(201).json({
     success: true,
@@ -196,6 +260,7 @@ router.post('/', [
     order
   });
 }));
+
 
 
 router.get('/getall', [

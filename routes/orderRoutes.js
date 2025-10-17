@@ -40,7 +40,7 @@ router.post('/', [
     items,
     deliveryType,
     paymentMethod,
-    codPaymentType, // NEW: Get COD payment type
+    codPaymentType,
     branchId,
     deliveryAddress,
     specialInstructions,
@@ -67,7 +67,7 @@ router.post('/', [
     });
   }
 
-  // Process cart items and calculate totals
+  // Process cart items - validate they exist but use frontend prices
   let processedItems = [];
   let subtotal = 0;
 
@@ -82,21 +82,9 @@ router.post('/', [
       });
     }
 
-    let unitPrice = foodItem.price;
-
-    if (item.selectedMealSize) {
-      unitPrice += item.selectedMealSize.additionalPrice || 0;
-    }
-    
-    if (item.selectedExtras) {
-      unitPrice += item.selectedExtras.reduce((sum, extra) => sum + (extra.price || 0), 0);
-    }
-    
-    if (item.selectedAddons) {
-      unitPrice += item.selectedAddons.reduce((sum, addon) => sum + (addon.price || 0), 0);
-    }
-
-    const totalPrice = unitPrice * item.quantity;
+    // Use prices from frontend - DO NOT recalculate
+    const unitPrice = item.unitPrice;
+    const totalPrice = item.totalPrice;
 
     processedItems.push({
       foodItem: foodItem._id,
@@ -110,40 +98,34 @@ router.post('/', [
     });
 
     subtotal += totalPrice;
-
     await foodItem.updateStock(item.quantity, "subtract");
   }
 
-  const deliveryFee = clientDeliveryFee !== undefined ? clientDeliveryFee : 0.0;
-  
+  // Use frontend totals as-is
+  const deliveryFee = clientDeliveryFee || 0.0;
+  const tax = clientTax || 0;
+  const discount = clientSubtotal - (clientSubtotal - (couponCode ? clientSubtotal * 0.1 : 0));
+  const total = clientTotal;
 
-
-  const taxRate = 0.00;
-  const tax = subtotal * taxRate;
-  
-  let discount = 0;
-  if (couponCode) {
-    discount = subtotal * 0.1;
-  }
-
-  const total = subtotal + deliveryFee + tax - discount;
-
-  if (clientTotal !== undefined && Math.abs(total - clientTotal) > 0.01) {
-    console.warn('Total mismatch:', {
-      calculated: total,
-      client: clientTotal,
-      difference: Math.abs(total - clientTotal)
-    });
+  // Just log if there's a mismatch, don't recalculate
+  if (clientTotal !== undefined) {
+    const expectedTotal = clientSubtotal + deliveryFee + tax - discount;
+    if (Math.abs(expectedTotal - clientTotal) > 0.01) {
+      console.warn('⚠️ Total mismatch:', {
+        expected: expectedTotal,
+        received: clientTotal,
+        difference: Math.abs(expectedTotal - clientTotal)
+      });
+    }
   }
 
   const orderNumber = "ORD" + Date.now();
 
-  // Create order with COD payment type
   const orderData = {
     orderNumber,
     userId: req.user.id,
     items: processedItems,
-    subtotal,
+    subtotal: clientSubtotal,
     deliveryFee,
     tax,
     discount,
@@ -153,55 +135,43 @@ router.post('/', [
     deliveryType,
     deliveryAddress,
     branchId,
-    specialInstructions
+    specialInstructions,
+    paymentStatus: PaymentStatus.pending
   };
 
-  // Add COD payment type if applicable
   if (codPaymentType) {
     orderData.codPaymentType = codPaymentType;
   }
 
   const order = await Order.create(orderData);
 
-  // Populate order details
   await order.populate([
     { path: 'userId', select: 'firstName lastName email phone' },
     { path: 'items.foodItem', select: 'name imageUrl price' },
     { path: 'branchId', select: 'name address phone' }
   ]);
-    const orderUserId = order.userId._id ? order.userId._id.toString() : order.userId.toString();
 
- 
+  const orderUserId = order.userId._id ? order.userId._id.toString() : order.userId.toString();
+
   try {
-    // 1. Send notification to customer
+    // Send notification to customer
     if (order.userId?.fcmToken) {
-      await sendOrderStatusNotification(
-        orderUserId,
-        order,
-        'pending'
-      );
+      await sendOrderStatusNotification(orderUserId, order, 'pending');
       console.log('✅ Customer notification sent');
     }
 
-    // 2. Send notification to ALL admins and managers
-    const adminUsers = await User.find({ 
+    // Send notification to admins
+    const adminUsers = await User.find({
       role: { $in: ['admin', 'manager', 'superadmin'] },
       isActive: true,
       fcmToken: { $exists: true, $ne: null }
     }).select('firstName lastName email fcmToken fcmTokens');
 
     if (adminUsers.length > 0) {
-      console.log(`📢 Sending notifications to ${adminUsers.length} admins/managers`);
-
-      // Collect all FCM tokens from admins (including multiple devices)
       const adminTokens = [];
       adminUsers.forEach(admin => {
-        // Add primary token
-        if (admin.fcmToken) {
-          adminTokens.push(admin.fcmToken);
-        }
-        // Add tokens from multiple devices
-        if (admin.fcmTokens && Array.isArray(admin.fcmTokens)) {
+        if (admin.fcmToken) adminTokens.push(admin.fcmToken);
+        if (admin.fcmTokens?.length) {
           admin.fcmTokens.forEach(tokenObj => {
             if (tokenObj.token && !adminTokens.includes(tokenObj.token)) {
               adminTokens.push(tokenObj.token);
@@ -210,32 +180,15 @@ router.post('/', [
         }
       });
 
-      // Remove duplicates
       const uniqueAdminTokens = [...new Set(adminTokens)];
-
-      console.log(`📱 Sending to ${uniqueAdminTokens.length} admin devices`);
-
       if (uniqueAdminTokens.length > 0) {
-        const notificationResult = await sendNewOrderNotification(
-          uniqueAdminTokens, 
-          order
-        );
-
-        if (notificationResult.success) {
-          console.log('✅ Admin notifications sent successfully');
-        } else {
-          console.error('❌ Failed to send admin notifications:', notificationResult.error);
-        }
+        await sendNewOrderNotification(uniqueAdminTokens, order);
+        console.log('✅ Admin notifications sent');
       }
-    } else {
-      console.log('⚠️ No admin users found with FCM tokens');
     }
-
   } catch (notificationError) {
-    console.error('❌ Error sending notifications:', notificationError);
-    // Don't fail the order creation if notifications fail
+    console.error('❌ Notification error:', notificationError);
   }
-
 
   res.status(201).json({
     success: true,
@@ -243,7 +196,6 @@ router.post('/', [
     order
   });
 }));
-
 
 
 router.get('/getall', [

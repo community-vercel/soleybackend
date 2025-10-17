@@ -69,7 +69,7 @@ router.post('/', [
 
   // Process cart items and calculate totals
   let processedItems = [];
- 
+  let subtotals = 0;
 
 for (const item of items) {
   const foodItemId = item.foodItem?.id || item.foodItem;
@@ -96,7 +96,7 @@ for (const item of items) {
     unitPrice += item.selectedAddons.reduce((sum, addon) => sum + (addon.price || 0), 0);
   }
 
-  const totalPrice = subtotal;
+  const totalPrice = unitPrice * item.quantity;
 
   processedItems.push({
     foodItem: foodItem._id,
@@ -109,7 +109,7 @@ for (const item of items) {
     totalPrice
   });
 
-  subtotal += totalPrice;
+  subtotals += totalPrice;
 
   await foodItem.updateStock(item.quantity, "subtract");
 }
@@ -126,7 +126,7 @@ for (const item of items) {
     discount = subtotal * 0.1;
   }
 
-  const total = subtotal + deliveryFee + tax - discount;
+  const total = subtotals + deliveryFee + tax - discount;
 
   if (clientTotal !== undefined && Math.abs(total - clientTotal) > 0.01) {
     console.warn('Total mismatch:', {
@@ -143,7 +143,7 @@ for (const item of items) {
     orderNumber,
     userId: req.user.id,
     items: processedItems,
-    subtotal,
+    subtotals,
     deliveryFee,
     tax,
     discount,

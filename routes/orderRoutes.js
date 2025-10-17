@@ -71,48 +71,50 @@ router.post('/', [
   let processedItems = [];
   let subtotal = 0;
 
-  for (const item of items) {
-    const foodItemId = item.foodItem?.id || item.foodItem;
-    const foodItem = await FoodItem.findById(foodItemId);
+for (const item of items) {
+  const foodItemId = item.foodItem?.id || item.foodItem;
+  const foodItem = await FoodItem.findById(foodItemId);
 
-    if (!foodItem || !foodItem.isActive) {
-      return res.status(400).json({
-        success: false,
-        message: `Food item ${foodItemId} is not available`
-      });
-    }
-
-    let unitPrice = foodItem.price;
-
-    if (item.selectedMealSize) {
-      unitPrice += item.selectedMealSize.additionalPrice || 0;
-    }
-    
-    if (item.selectedExtras) {
-      unitPrice += item.selectedExtras.reduce((sum, extra) => sum + (extra.price || 0), 0);
-    }
-    
-    if (item.selectedAddons) {
-      unitPrice += item.selectedAddons.reduce((sum, addon) => sum + (addon.price || 0), 0);
-    }
-
-    const totalPrice = unitPrice * item.quantity;
-
-    processedItems.push({
-      foodItem: foodItem._id,
-      quantity: item.quantity,
-      selectedMealSize: item.selectedMealSize,
-      selectedExtras: item.selectedExtras || [],
-      selectedAddons: item.selectedAddons || [],
-      specialInstructions: item.specialInstructions,
-      unitPrice,
-      totalPrice
+  if (!foodItem || !foodItem.isActive) {
+    return res.status(400).json({
+      success: false,
+      message: `Food item ${foodItemId} is not available`
     });
-
-    subtotal += totalPrice;
-
-    await foodItem.updateStock(item.quantity, "subtract");
   }
+
+  // Start with base price ONLY
+  let unitPrice = foodItem.price;
+
+  // Add modifiers
+  if (item.selectedMealSize) {
+    unitPrice += item.selectedMealSize.additionalPrice || 0;
+  }
+  
+  if (item.selectedExtras) {
+    unitPrice += item.selectedExtras.reduce((sum, extra) => sum + (extra.price || 0), 0);
+  }
+  
+  if (item.selectedAddons) {
+    unitPrice += item.selectedAddons.reduce((sum, addon) => sum + (addon.price || 0), 0);
+  }
+
+  const totalPrice = unitPrice * item.quantity;
+
+  processedItems.push({
+    foodItem: foodItem._id,
+    quantity: item.quantity,
+    selectedMealSize: item.selectedMealSize,
+    selectedExtras: item.selectedExtras || [],
+    selectedAddons: item.selectedAddons || [],
+    specialInstructions: item.specialInstructions,
+    unitPrice,
+    totalPrice
+  });
+
+  subtotal += totalPrice;
+
+  await foodItem.updateStock(item.quantity, "subtract");
+}
 
   const deliveryFee = clientDeliveryFee !== undefined ? clientDeliveryFee : 0.0;
   

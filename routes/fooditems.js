@@ -125,6 +125,9 @@ router.get('/', [
 
 
 
+// routes/foodItems.js
+// routes/foodItems.js - Return all languages
+
 router.get('/getallitems', [
   query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
   query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
@@ -135,14 +138,15 @@ router.get('/getallitems', [
   query('priceMin').optional().isFloat({ min: 0 }).withMessage('Price min must be non-negative'),
   query('priceMax').optional().isFloat({ min: 0 }).withMessage('Price max must be non-negative'),
   query('rating').optional().isFloat({ min: 0, max: 5 }).withMessage('Rating must be between 0 and 5'),
-  query('sortBy').optional().isIn(['relevance', 'price-low', 'price-high', 'rating', 'popular', 'newest']).withMessage('Invalid sort option')
+  query('sortBy').optional().isIn(['relevance', 'price-low', 'price-high', 'rating', 'popular', 'newest']).withMessage('Invalid sort option'),
+  query('lang').optional().isIn(['en', 'es', 'ca', 'ar']).withMessage('Invalid language code'),
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({
       success: false,
       message: 'Validation failed',
-      errors: errors.array()
+      errors: errors.array(),
     });
   }
 
@@ -157,11 +161,11 @@ router.get('/getallitems', [
     priceMin,
     priceMax,
     rating,
-    sortBy = 'relevance'
+    sortBy = 'relevance',
+    lang = req.headers['accept-language']?.split(',')[0] || 'en',
   } = req.query;
 
   const skip = (page - 1) * limit;
-
   let query = { isActive: true };
 
   // Apply filters
@@ -170,15 +174,13 @@ router.get('/getallitems', [
   if (popular !== undefined) query.isPopular = popular === 'true';
   if (veg !== undefined) query.isVeg = veg === 'true';
   if (rating) query['rating.average'] = { $gte: parseFloat(rating) };
-
-  // Price range filter
+  
   if (priceMin !== undefined || priceMax !== undefined) {
     query.price = {};
     if (priceMin !== undefined) query.price.$gte = parseFloat(priceMin);
     if (priceMax !== undefined) query.price.$lte = parseFloat(priceMax);
   }
-
-  // Search functionality
+  
   if (search) {
     query.$text = { $search: search };
   }
@@ -201,7 +203,7 @@ router.get('/getallitems', [
     case 'newest':
       sortOptions = { createdAt: -1 };
       break;
-    default: // relevance
+    default:
       if (search) {
         sortOptions = { score: { $meta: 'textScore' } };
       } else {
@@ -215,19 +217,20 @@ router.get('/getallitems', [
     .sort(sortOptions)
     .limit(parseInt(limit))
     .skip(skip)
-    .select('-reviews'); // Exclude reviews for performance
+    .select('-reviews');
 
-  // Get total count for pagination
   const totalItems = await FoodItem.countDocuments(query);
   const totalPages = Math.ceil(totalItems / limit);
 
+  // Return all languages in response (no localization filtering)
   res.json({
     success: true,
     count: items.length,
-    totalItems,
-    totalPages,
+    totalItems: totalItems,
+    totalPages: totalPages,
     currentPage: parseInt(page),
-    items
+    availableLanguages: ['en', 'es', 'ca', 'ar'],
+    items: items,
   });
 }));
 // @desc    Get featured food items

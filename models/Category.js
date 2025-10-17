@@ -295,41 +295,48 @@ const foodItemSchema = new mongoose.Schema({
 });
 
 // Method to get localized data
-foodItemSchema.methods.getLocalized = function(lang = 'en') {
+// Fixed getLocalized method for FoodItem schema
+
+foodItemSchema.methods.getLocalized = function (lang = 'en') {
   const validLangs = ['en', 'es', 'ca', 'ar'];
   const selectedLang = validLangs.includes(lang) ? lang : 'en';
-  
-  const localizeText = (textObj) => {
-    if (!textObj) return '';
-    return textObj[selectedLang] || textObj.en || '';
+
+  // Helper function to extract the correct language from multilingual field
+  const extractLang = (field) => {
+    if (!field) return '';
+    
+    // If it's already a string (legacy data), return it
+    if (typeof field === 'string') {
+      return field;
+    }
+    
+    // If it's an object (multilingual), get the requested language
+    if (typeof field === 'object') {
+      // Return requested language, with fallback order
+      return field[selectedLang] || field['en'] || field['es'] || field['ca'] || field['ar'] || '';
+    }
+    
+    return '';
   };
-  
-  const localizeArray = (arr) => {
-    if (!arr || !arr.length) return [];
-    return arr.map(item => {
-      if (item.name) {
-        return {
-          ...item.toObject ? item.toObject() : item,
-          name: localizeText(item.name)
-        };
-      }
-      return localizeText(item);
-    });
-  };
-  
+
   return {
     _id: this._id,
-    name: localizeText(this.name),
-    description: localizeText(this.description),
+    name: extractLang(this.name),
+    description: extractLang(this.description),
     price: this.price,
     originalPrice: this.originalPrice,
     imageUrl: this.imageUrl,
-    images: this.images?.map(img => ({
+    images: this.images.map(img => ({
       url: img.url,
-      alt: localizeText(img.alt)
+      alt: extractLang(img.alt)
     })),
-    category: this.category,
-    tags: localizeArray(this.tags),
+    category: this.category ? {
+      _id: this.category._id,
+      name: extractLang(this.category.name),
+      icon: this.category.icon,
+      id: this.category.id
+    } : null,
+    tags: this.tags.map(tag => extractLang(tag)),
     isVeg: this.isVeg,
     isVegan: this.isVegan,
     isGlutenFree: this.isGlutenFree,
@@ -344,25 +351,43 @@ foodItemSchema.methods.getLocalized = function(lang = 'en') {
     preparationTime: this.preparationTime,
     rating: this.rating,
     nutrition: this.nutrition,
-    mealSizes: localizeArray(this.mealSizes),
-    extras: localizeArray(this.extras),
-    addons: localizeArray(this.addons),
-    ingredients: localizeArray(this.ingredients),
+    mealSizes: this.mealSizes.map(size => ({
+      name: extractLang(size.name),
+      additionalPrice: size.additionalPrice
+    })),
+    extras: this.extras.map(extra => ({
+      name: extractLang(extra.name),
+      price: extra.price
+    })),
+    addons: this.addons.map(addon => ({
+      name: extractLang(addon.name),
+      price: addon.price,
+      imageUrl: addon.imageUrl
+    })),
+    ingredients: this.ingredients.map(ingredient => ({
+      name: extractLang(ingredient.name),
+      optional: ingredient.optional
+    })),
     allergens: this.allergens,
     servingSize: this.servingSize,
     weight: this.weight,
     sku: this.sku,
     barcode: this.barcode,
     stockQuantity: this.stockQuantity,
+    lowStockAlert: this.lowStockAlert,
     totalSold: this.totalSold,
-    reviews: this.reviews,
+    reviews: this.reviews || [],
     discountPercentage: this.discountPercentage,
     availabilityStatus: this.availabilityStatus,
     createdAt: this.createdAt,
-    updatedAt: this.updatedAt
+    updatedAt: this.updatedAt,
+    seoData: {
+      metaTitle: extractLang(this.seoData?.metaTitle),
+      metaDescription: extractLang(this.seoData?.metaDescription),
+      keywords: this.seoData?.keywords?.map(keyword => extractLang(keyword)) || []
+    }
   };
 };
-
 // Virtual for discount percentage
 foodItemSchema.virtual('discountPercentage').get(function() {
   if (this.originalPrice && this.originalPrice > this.price) {

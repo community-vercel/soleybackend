@@ -86,9 +86,7 @@ for (const item of items) {
   let unitPrice = foodItem.price;
 
   // Add modifiers
-  if (item.selectedMealSize) {
-    unitPrice += item.selectedMealSize.additionalPrice || 0;
-  }
+ 
   
   if (item.selectedExtras) {
     unitPrice += item.selectedExtras.reduce((sum, extra) => sum + (extra.price || 0), 0);

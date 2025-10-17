@@ -138,24 +138,6 @@ if (clientTotal !== undefined && Math.abs(calculatedTotal - clientTotal) > 0.01)
   }
 
   const orderNumber = "ORD" + Date.now();
-
-  // Create order with COD payment type
-  const orderData = {
-    orderNumber,
-    userId: req.user.id,
-    items: processedItems,
-    subtotal,
-    deliveryFee,
-    tax,
-    discount,
-    couponCode,
-    total,
-    paymentMethod,
-    deliveryType,
-    deliveryAddress,
-    branchId,
-    specialInstructions
-  };
   const orderData = {
     orderNumber,
     userId: req.user.id,

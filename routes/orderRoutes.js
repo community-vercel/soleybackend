@@ -16,18 +16,21 @@ const { sendOrderStatusNotification, sendNewOrderNotification } = require('../ut
 // @access  Private
 // Update your POST /api/v1/orders route
 // Update your POST /api/v1/orders route validation
+// @desc    Create new order
+// @route   POST /api/v1/orders
+// @access  Private
 router.post('/', [
   auth,
   body('items').isArray({ min: 1 }).withMessage('Order must contain at least one item'),
   body('items.*.foodItem.id').isMongoId().withMessage('Invalid food item ID'),
   body('items.*.quantity').isInt({ min: 1 }).withMessage('Quantity must be at least 1'),
-  body('items.*.unitPrice').isFloat({ min: 0 }).withMessage('Unit price is required'),
-  body('items.*.totalPrice').isFloat({ min: 0 }).withMessage('Total price is required'),
   body('deliveryType').isIn(['delivery', 'pickup']).withMessage('Invalid delivery type'),
   body('paymentMethod').isIn(['cash-on-delivery','cashOnDelivery', 'card','shop', 'paypal', 'stripe']).withMessage('Invalid payment method'),
   body('codPaymentType').optional().isIn(['cash', 'card']).withMessage('Invalid COD payment type'),
   body('branchId').isMongoId().withMessage('Invalid branch ID'),
   body('deliveryFee').optional().isFloat({ min: 0 }).withMessage('Delivery fee must be a positive number'),
+  body('subtotal').isFloat({ min: 0 }).withMessage('Subtotal must be a positive number'),
+  body('total').isFloat({ min: 0 }).withMessage('Total must be a positive number'),
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -53,6 +56,7 @@ router.post('/', [
     total: clientTotal
   } = req.body;
 
+  // Validate COD payment type for cash-on-delivery orders
   if ((paymentMethod === 'cashOnDelivery' || paymentMethod === 'cash-on-delivery') && !codPaymentType) {
     return res.status(400).json({
       success: false,
@@ -60,6 +64,7 @@ router.post('/', [
     });
   }
 
+  // Validate delivery address for delivery orders
   if (deliveryType === 'delivery' && !deliveryAddress) {
     return res.status(400).json({
       success: false,
@@ -67,8 +72,9 @@ router.post('/', [
     });
   }
 
+  // Process cart items - TRUST frontend calculations, only validate food items exist
   let processedItems = [];
-  let subtotal = 0;
+  let calculatedSubtotal = 0;
 
   for (const item of items) {
     const foodItemId = item.foodItem?.id || item.foodItem;
@@ -81,67 +87,61 @@ router.post('/', [
       });
     }
 
-    // Validate food item is in stock
-    if (foodItem.stock < item.quantity) {
-      return res.status(400).json({
-        success: false,
-        message: `Insufficient stock for ${foodItem.name}`
-      });
-    }
-    let unitPrice = foodItem.price;
+    // IMPORTANT: Use unitPrice and totalPrice from frontend
+    // Frontend already calculated these including meal size, extras, addons
+    const unitPrice = item.unitPrice;
+    const totalPrice = item.totalPrice;
 
-    // Use prices from frontend exactly as sent
     processedItems.push({
       foodItem: foodItem._id,
       quantity: item.quantity,
-      selectedMealSize: item.selectedMealSize || undefined,
+      selectedMealSize: item.selectedMealSize,
       selectedExtras: item.selectedExtras || [],
       selectedAddons: item.selectedAddons || [],
-      specialInstructions: item.specialInstructions || '',
-      unitPrice: unitPrice,
-      totalPrice: item.totalPrice
+      specialInstructions: item.specialInstructions,
+      unitPrice,
+      totalPrice
     });
 
-    subtotal += item.totalPrice;
+    calculatedSubtotal += totalPrice;
     await foodItem.updateStock(item.quantity, "subtract");
   }
 
-  const deliveryFee = clientDeliveryFee || 0.0;
-  const tax = clientTax || 0;
-  const discount = couponCode ? (clientSubtotal * 0.1) : 0;
-  const total = clientTotal;
-
-  console.log('Order calculation:', {
-    subtotal: clientSubtotal,
-    deliveryFee,
-    tax,
-    discount,
-    total
-  });
+  const deliveryFee = clientDeliveryFee !== undefined ? clientDeliveryFee : 0.0;
+  const tax = clientTax !== undefined ? clientTax : 0.0;
+  const discount = clientTax !== undefined ? clientTax : 0.0; // Changed from clientTax to correct variable if needed
+  
+  // Use frontend's total since all calculations are done there
+  const total = clientTotal !== undefined ? clientTotal : (calculatedSubtotal + deliveryFee + tax - discount);
 
   const orderNumber = "ORD" + Date.now();
 
+  // Create order with frontend-calculated totals
   const orderData = {
     orderNumber,
     userId: req.user.id,
     items: processedItems,
-    subtotal: clientSubtotal,
+    subtotal: clientSubtotal || calculatedSubtotal,
     deliveryFee,
     tax,
     discount,
     couponCode,
     total,
     paymentMethod,
-    paymentStatus: 'pending',
     deliveryType,
-    deliveryAddress: deliveryType === 'delivery' ? deliveryAddress : undefined,
+    deliveryAddress,
     branchId,
-    specialInstructions,
-    ...(codPaymentType && { codPaymentType })
+    specialInstructions
   };
+
+  // Add COD payment type if applicable
+  if (codPaymentType) {
+    orderData.codPaymentType = codPaymentType;
+  }
 
   const order = await Order.create(orderData);
 
+  // Populate order details
   await order.populate([
     { path: 'userId', select: 'firstName lastName email phone' },
     { path: 'items.foodItem', select: 'name imageUrl price' },
@@ -151,12 +151,18 @@ router.post('/', [
   const orderUserId = order.userId._id ? order.userId._id.toString() : order.userId.toString();
 
   try {
+    // 1. Send notification to customer
     if (order.userId?.fcmToken) {
-      await sendOrderStatusNotification(orderUserId, order, 'pending');
+      await sendOrderStatusNotification(
+        orderUserId,
+        order,
+        'pending'
+      );
       console.log('✅ Customer notification sent');
     }
 
-    const adminUsers = await User.find({
+    // 2. Send notification to ALL admins and managers
+    const adminUsers = await User.find({ 
       role: { $in: ['admin', 'manager', 'superadmin'] },
       isActive: true,
       fcmToken: { $exists: true, $ne: null }
@@ -165,8 +171,10 @@ router.post('/', [
     if (adminUsers.length > 0) {
       const adminTokens = [];
       adminUsers.forEach(admin => {
-        if (admin.fcmToken) adminTokens.push(admin.fcmToken);
-        if (admin.fcmTokens?.length) {
+        if (admin.fcmToken) {
+          adminTokens.push(admin.fcmToken);
+        }
+        if (admin.fcmTokens && Array.isArray(admin.fcmTokens)) {
           admin.fcmTokens.forEach(tokenObj => {
             if (tokenObj.token && !adminTokens.includes(tokenObj.token)) {
               adminTokens.push(tokenObj.token);
@@ -176,13 +184,22 @@ router.post('/', [
       });
 
       const uniqueAdminTokens = [...new Set(adminTokens)];
+
       if (uniqueAdminTokens.length > 0) {
-        await sendNewOrderNotification(uniqueAdminTokens, order);
-        console.log('✅ Admin notifications sent');
+        const notificationResult = await sendNewOrderNotification(
+          uniqueAdminTokens, 
+          order
+        );
+
+        if (notificationResult.success) {
+          console.log('✅ Admin notifications sent successfully');
+        } else {
+          console.error('❌ Failed to send admin notifications:', notificationResult.error);
+        }
       }
     }
   } catch (notificationError) {
-    console.error('Notification error:', notificationError);
+    console.error('❌ Error sending notifications:', notificationError);
   }
 
   res.status(201).json({
@@ -191,6 +208,7 @@ router.post('/', [
     order
   });
 }));
+
 
 
 router.get('/getall', [

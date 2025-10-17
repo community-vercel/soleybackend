@@ -46,7 +46,7 @@ router.post('/', [
     specialInstructions,
     couponCode,
     deliveryFee: clientDeliveryFee,
-    subtotal: clientSubtotal,
+    subtotal: subtotal,
     tax: clientTax,
     total: clientTotal
   } = req.body;
@@ -69,7 +69,7 @@ router.post('/', [
 
   // Process cart items and calculate totals
   let processedItems = [];
-  let subtotal = 0;
+ 
 
 for (const item of items) {
   const foodItemId = item.foodItem?.id || item.foodItem;
@@ -96,7 +96,7 @@ for (const item of items) {
     unitPrice += item.selectedAddons.reduce((sum, addon) => sum + (addon.price || 0), 0);
   }
 
-  const totalPrice = unitPrice * item.quantity;
+  const totalPrice = subtotal;
 
   processedItems.push({
     foodItem: foodItem._id,

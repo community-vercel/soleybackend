@@ -21,6 +21,8 @@ router.post('/', [
   body('items').isArray({ min: 1 }).withMessage('Order must contain at least one item'),
   body('items.*.foodItem.id').isMongoId().withMessage('Invalid food item ID'),
   body('items.*.quantity').isInt({ min: 1 }).withMessage('Quantity must be at least 1'),
+  body('items.*.unitPrice').isFloat({ min: 0 }).withMessage('Unit price is required'),
+  body('items.*.totalPrice').isFloat({ min: 0 }).withMessage('Total price is required'),
   body('deliveryType').isIn(['delivery', 'pickup']).withMessage('Invalid delivery type'),
   body('paymentMethod').isIn(['cash-on-delivery','cashOnDelivery', 'card','shop', 'paypal', 'stripe']).withMessage('Invalid payment method'),
   body('codPaymentType').optional().isIn(['cash', 'card']).withMessage('Invalid COD payment type'),
@@ -40,7 +42,7 @@ router.post('/', [
     items,
     deliveryType,
     paymentMethod,
-    codPaymentType, // NEW: Get COD payment type
+    codPaymentType,
     branchId,
     deliveryAddress,
     specialInstructions,
@@ -51,7 +53,6 @@ router.post('/', [
     total: clientTotal
   } = req.body;
 
-  // Validate COD payment type for cash-on-delivery orders
   if ((paymentMethod === 'cashOnDelivery' || paymentMethod === 'cash-on-delivery') && !codPaymentType) {
     return res.status(400).json({
       success: false,
@@ -59,7 +60,6 @@ router.post('/', [
     });
   }
 
-  // Validate delivery address for delivery orders
   if (deliveryType === 'delivery' && !deliveryAddress) {
     return res.status(400).json({
       success: false,
@@ -67,77 +67,60 @@ router.post('/', [
     });
   }
 
-  // Process cart items and calculate totals
   let processedItems = [];
   let subtotal = 0;
 
-// In your POST /api/v1/orders route - replace the item processing loop
-for (const item of items) {
-  const foodItemId = item.foodItem?.id || item.foodItem;
-  const foodItem = await FoodItem.findById(foodItemId);
+  for (const item of items) {
+    const foodItemId = item.foodItem?.id || item.foodItem;
+    const foodItem = await FoodItem.findById(foodItemId);
 
-  if (!foodItem || !foodItem.isActive) {
-    return res.status(400).json({
-      success: false,
-      message: `Food item ${foodItemId} is not available`
+    if (!foodItem || !foodItem.isActive) {
+      return res.status(400).json({
+        success: false,
+        message: `Food item ${foodItemId} is not available`
+      });
+    }
+
+    // Validate food item is in stock
+    if (foodItem.stock < item.quantity) {
+      return res.status(400).json({
+        success: false,
+        message: `Insufficient stock for ${foodItem.name}`
+      });
+    }
+    let unitPrice = foodItem.price;
+
+    // Use prices from frontend exactly as sent
+    processedItems.push({
+      foodItem: foodItem._id,
+      quantity: item.quantity,
+      selectedMealSize: item.selectedMealSize || undefined,
+      selectedExtras: item.selectedExtras || [],
+      selectedAddons: item.selectedAddons || [],
+      specialInstructions: item.specialInstructions || '',
+      unitPrice: unitPrice,
+      totalPrice: item.totalPrice
     });
+
+    subtotal += item.totalPrice;
+    await foodItem.updateStock(item.quantity, "subtract");
   }
 
-  // Use prices already calculated on frontend
-  const unitPrice = item.unitPrice; // Trust frontend calculation
-  const totalPrice = item.totalPrice; // Trust frontend calculation
+  const deliveryFee = clientDeliveryFee || 0.0;
+  const tax = clientTax || 0;
+  const discount = couponCode ? (clientSubtotal * 0.1) : 0;
+  const total = clientTotal;
 
-  processedItems.push({
-    foodItem: foodItem._id,
-    quantity: item.quantity,
-    selectedMealSize: item.selectedMealSize,
-    selectedExtras: item.selectedExtras || [],
-    selectedAddons: item.selectedAddons || [],
-    specialInstructions: item.specialInstructions,
-    unitPrice,
-    totalPrice
+  console.log('Order calculation:', {
+    subtotal: clientSubtotal,
+    deliveryFee,
+    tax,
+    discount,
+    total
   });
-
-  subtotal += totalPrice;
-
-  await foodItem.updateStock(item.quantity, "subtract");
-}
-
-// Verify total matches frontend calculation
-const calculatedTotal = subtotal + clientDeliveryFee + (subtotal * 0.00) - 0;
-
-if (clientTotal !== undefined && Math.abs(calculatedTotal - clientTotal) > 0.01) {
-  console.warn('Total mismatch:', {
-    calculated: calculatedTotal,
-    client: clientTotal,
-    difference: Math.abs(calculatedTotal - clientTotal)
-  });
-  // Still allow order but log warning
-}
-
-  const deliveryFee = clientDeliveryFee !== undefined ? clientDeliveryFee : 0.0;
-  
-
-
-  const taxRate = 0.00;
-  const tax = subtotal * taxRate;
-  
-  let discount = 0;
-  if (couponCode) {
-    discount = subtotal * 0.1;
-  }
-
-  const total = subtotal + deliveryFee + tax - discount;
-
-  if (clientTotal !== undefined && Math.abs(total - clientTotal) > 0.01) {
-    console.warn('Total mismatch:', {
-      calculated: total,
-      client: clientTotal,
-      difference: Math.abs(total - clientTotal)
-    });
-  }
 
   const orderNumber = "ORD" + Date.now();
+
   const orderData = {
     orderNumber,
     userId: req.user.id,
@@ -149,58 +132,41 @@ if (clientTotal !== undefined && Math.abs(calculatedTotal - clientTotal) > 0.01)
     couponCode,
     total,
     paymentMethod,
+    paymentStatus: 'pending',
     deliveryType,
-    deliveryAddress,
+    deliveryAddress: deliveryType === 'delivery' ? deliveryAddress : undefined,
     branchId,
     specialInstructions,
+    ...(codPaymentType && { codPaymentType })
   };
-
-  // Add COD payment type if applicable
-  if (codPaymentType) {
-    orderData.codPaymentType = codPaymentType;
-  }
 
   const order = await Order.create(orderData);
 
-  // Populate order details
   await order.populate([
     { path: 'userId', select: 'firstName lastName email phone' },
     { path: 'items.foodItem', select: 'name imageUrl price' },
     { path: 'branchId', select: 'name address phone' }
   ]);
-    const orderUserId = order.userId._id ? order.userId._id.toString() : order.userId.toString();
 
- 
+  const orderUserId = order.userId._id ? order.userId._id.toString() : order.userId.toString();
+
   try {
-    // 1. Send notification to customer
     if (order.userId?.fcmToken) {
-      await sendOrderStatusNotification(
-        orderUserId,
-        order,
-        'pending'
-      );
+      await sendOrderStatusNotification(orderUserId, order, 'pending');
       console.log('✅ Customer notification sent');
     }
 
-    // 2. Send notification to ALL admins and managers
-    const adminUsers = await User.find({ 
+    const adminUsers = await User.find({
       role: { $in: ['admin', 'manager', 'superadmin'] },
       isActive: true,
       fcmToken: { $exists: true, $ne: null }
     }).select('firstName lastName email fcmToken fcmTokens');
 
     if (adminUsers.length > 0) {
-      console.log(`📢 Sending notifications to ${adminUsers.length} admins/managers`);
-
-      // Collect all FCM tokens from admins (including multiple devices)
       const adminTokens = [];
       adminUsers.forEach(admin => {
-        // Add primary token
-        if (admin.fcmToken) {
-          adminTokens.push(admin.fcmToken);
-        }
-        // Add tokens from multiple devices
-        if (admin.fcmTokens && Array.isArray(admin.fcmTokens)) {
+        if (admin.fcmToken) adminTokens.push(admin.fcmToken);
+        if (admin.fcmTokens?.length) {
           admin.fcmTokens.forEach(tokenObj => {
             if (tokenObj.token && !adminTokens.includes(tokenObj.token)) {
               adminTokens.push(tokenObj.token);
@@ -209,32 +175,15 @@ if (clientTotal !== undefined && Math.abs(calculatedTotal - clientTotal) > 0.01)
         }
       });
 
-      // Remove duplicates
       const uniqueAdminTokens = [...new Set(adminTokens)];
-
-      console.log(`📱 Sending to ${uniqueAdminTokens.length} admin devices`);
-
       if (uniqueAdminTokens.length > 0) {
-        const notificationResult = await sendNewOrderNotification(
-          uniqueAdminTokens, 
-          order
-        );
-
-        if (notificationResult.success) {
-          console.log('✅ Admin notifications sent successfully');
-        } else {
-          console.error('❌ Failed to send admin notifications:', notificationResult.error);
-        }
+        await sendNewOrderNotification(uniqueAdminTokens, order);
+        console.log('✅ Admin notifications sent');
       }
-    } else {
-      console.log('⚠️ No admin users found with FCM tokens');
     }
-
   } catch (notificationError) {
-    console.error('❌ Error sending notifications:', notificationError);
-    // Don't fail the order creation if notifications fail
+    console.error('Notification error:', notificationError);
   }
-
 
   res.status(201).json({
     success: true,
@@ -242,7 +191,6 @@ if (clientTotal !== undefined && Math.abs(calculatedTotal - clientTotal) > 0.01)
     order
   });
 }));
-
 
 
 router.get('/getall', [

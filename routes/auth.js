@@ -843,4 +843,49 @@ router.post('/test-notification', [
     details: result
   });
 }));
+// routes/auth.js - Add this endpoint
+
+// @desc    Refresh authentication token
+// @route   POST /api/v1/auth/refresh-token
+// @access  Private (requires valid token)
+router.post('/refresh-token', auth, asyncHandler(async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Check if user account is active
+    if (!user.isActive) {
+      return res.status(401).json({
+        success: false,
+        message: 'Account deactivated'
+      });
+    }
+
+    // Generate fresh token (30-day expiry from now)
+    const newToken = user.generateAuthToken();
+
+    if (process.env.DEBUG) {
+      console.log(`✅ Token refreshed for user: ${user.email}`);
+    }
+
+    res.json({
+      success: true,
+      message: 'Token refreshed successfully',
+      token: newToken,
+      expiresIn: process.env.JWT_EXPIRE || '30d'
+    });
+  } catch (error) {
+    console.error('Token refresh error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to refresh token'
+    });
+  }
+}));
 module.exports = router;
